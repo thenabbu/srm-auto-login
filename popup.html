@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=300, initial-scale=1.0" />
+  <title>SRM Auto Login</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg:           #080808;
+      --surface:      #111111;
+      --surface-2:    #171717;
+      --border:       #202020;
+      --border-mid:   #2e2e2e;
+      --border-hover: #444444;
+      --border-focus: #e0e0e0;
+      --text:         #ececec;
+      --text-2:       #888888;
+      --text-3:       #3c3c3c;
+      --radius:       3px;
+    }
+
+    html, body {
+      width: 280px;
+      font-family: 'IBM Plex Sans', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    .header {
+      padding: 13px 14px 11px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .header h1 {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--text);
+    }
+
+    .status-pip {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--text-3);
+      flex-shrink: 0;
+      transition: background 0.25s ease, box-shadow 0.25s ease;
+    }
+
+    .status-pip.on {
+      background: var(--text);
+      box-shadow: 0 0 5px rgba(220, 220, 220, 0.3);
+    }
+
+    form {
+      padding: 13px 14px 11px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    label {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px;
+      font-weight: 500;
+      color: var(--text-2);
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      user-select: none;
+    }
+
+    .input-wrap {
+      position: relative;
+    }
+
+    input[type="email"],
+    input[type="password"],
+    input[type="text"] {
+      width: 100%;
+      padding: 7px 9px;
+      background: var(--surface);
+      border: 1px solid var(--border-mid);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: 'IBM Plex Sans', system-ui, sans-serif;
+      font-size: 12px;
+      font-weight: 400;
+      outline: none;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+
+    input[type="password"],
+    input.has-toggle {
+      padding-right: 46px;
+    }
+
+    input::placeholder {
+      color: var(--text-3);
+      font-style: italic;
+    }
+
+    input:hover {
+      border-color: var(--border-hover);
+    }
+
+    input:focus {
+      border-color: var(--border-focus);
+      background: var(--surface-2);
+    }
+
+    input:focus::placeholder {
+      color: var(--text-2);
+    }
+
+    input:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus {
+      -webkit-box-shadow: 0 0 0 40px var(--surface-2) inset;
+      -webkit-text-fill-color: var(--text);
+      transition: background-color 9999s ease-in-out 0s;
+      caret-color: var(--text);
+    }
+
+    .toggle-pw {
+      position: absolute;
+      right: 0;
+      top: 0;
+      height: 100%;
+      padding: 0 9px;
+      background: transparent;
+      border: none;
+      border-left: 1px solid var(--border-mid);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      color: var(--text-2);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 8.5px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      cursor: pointer;
+      transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .toggle-pw:hover {
+      color: var(--text);
+      border-color: var(--border-hover);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .toggle-pw:active {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    input:focus ~ .toggle-pw {
+      border-left-color: var(--border-focus);
+    }
+
+    .saved-bar {
+      display: none;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 9px;
+      background: var(--surface);
+      border: 1px solid var(--border-mid);
+      border-radius: var(--radius);
+    }
+
+    .saved-bar.visible {
+      display: flex;
+    }
+
+    .saved-bar .pip {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--text);
+      flex-shrink: 0;
+    }
+
+    .saved-bar span {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px;
+      color: var(--text-2);
+      letter-spacing: 0.03em;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 5px;
+    }
+
+    button {
+      font-family: 'IBM Plex Sans', system-ui, sans-serif;
+      cursor: pointer;
+      border-radius: var(--radius);
+      font-size: 12px;
+      font-weight: 500;
+      transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    }
+
+    button:focus-visible {
+      outline: 1px solid var(--border-focus);
+      outline-offset: 2px;
+    }
+
+    button:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    button.primary {
+      flex: 1;
+      padding: 8px 12px;
+      background: var(--text);
+      border: 1px solid var(--text);
+      color: var(--bg);
+      letter-spacing: 0.01em;
+    }
+
+    button.primary:hover  { opacity: 0.88; }
+    button.primary:active { opacity: 0.72; }
+
+    button.secondary {
+      padding: 8px 11px;
+      background: transparent;
+      border: 1px solid var(--border-mid);
+      color: var(--text-2);
+    }
+
+    button.secondary:hover {
+      border-color: var(--border-hover);
+      color: var(--text);
+    }
+
+    button.secondary:active {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .status {
+      display: none;
+      padding: 7px 9px 7px 8px;
+      border-radius: var(--radius);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .status.success {
+      display: block;
+      background: var(--surface);
+      border: 1px solid var(--border-mid);
+      border-left: 2px solid var(--text);
+      color: var(--text);
+    }
+
+    .status.error {
+      display: block;
+      background: var(--surface);
+      border: 1px solid var(--border-mid);
+      border-left: 2px solid var(--text-2);
+      color: var(--text-2);
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--border);
+    }
+
+    .footer {
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .footer-icon svg {
+      display: block;
+      width: 10px;
+      height: 10px;
+      flex-shrink: 0;
+    }
+
+    .footer p {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 9px;
+      color: var(--text-3);
+      letter-spacing: 0.02em;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>SRM Auto Login</h1>
+    <div class="status-pip" id="statusPip"></div>
+  </div>
+
+  <form id="loginForm" autocomplete="off" novalidate>
+
+    <div class="field">
+      <label for="emailInput">Email</label>
+      <div class="input-wrap">
+        <input type="email" id="emailInput" placeholder="ab1234@srmist.edu.in"
+          autocomplete="username" spellcheck="false" required />
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="pwInput">Password</label>
+      <div class="input-wrap">
+        <input type="password" id="pwInput" class="has-toggle"
+          autocomplete="current-password" required />
+        <button class="toggle-pw" id="togglePw" type="button" aria-label="Toggle password visibility">Show</button>
+      </div>
+    </div>
+
+    <div class="saved-bar" id="savedBar">
+      <span class="pip"></span>
+      <span>saved &middot; auto-login active</span>
+    </div>
+
+    <div class="btn-row">
+      <button class="primary" id="saveBtn" type="submit">Save</button>
+      <button class="secondary" id="clearBtn" type="button">Clear</button>
+    </div>
+
+    <div class="status" id="statusMsg" role="status" aria-live="polite"></div>
+
+  </form>
+
+  <div class="divider"></div>
+
+  <div class="footer">
+   <svg width="8" height="8" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;">
+        <rect x="1.5" y="4.5" width="7" height="5" rx="0.75" stroke="#3c3c3c" stroke-width="1"/>
+        <path d="M3 4.5V3C3 1.9 3.9 1 5 1C6.1 1 7 1.9 7 3V4.5" stroke="#3c3c3c" stroke-width="1" stroke-linecap="round"/>
+      </svg>
+    <p>stored locally &middot; never transmitted</p>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

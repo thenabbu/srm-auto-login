@@ -19,7 +19,7 @@ Works with Chrome, Edge, Brave, and other Chromium-based browsers.
 3. Turn on **Developer mode** using the toggle in the top right
 4. Click **Load unpacked** and select the unzipped folder
 5. Congrats! You have installed the extension.
-6. Click on it, enter your SRM email and password, hit **Save account**
+6. Click on it, enter your six-character SRM ID and password, hit **Save account**
 7. Done!
 
 ### Firefox / Firefox-Based Browsers
@@ -35,7 +35,9 @@ Works with Chrome, Edge, Brave, and other Chromium-based browsers.
 
 ## Accounts
 
-You can save multiple SRM accounts. Passwords are visible only while you are typing or replacing them. After saving, the popup only shows the email address; a saved password can be deleted or replaced, but not viewed.
+You can save multiple SRM accounts. SRM IDs use the `ab1234@srmist.edu.in` format, so the popup only asks for the first six characters and fills `@srmist.edu.in` for you.
+
+Each saved account has its own auto-login toggle. Passwords are visible only while you are typing or replacing them. After saving, the popup only shows the email address; a saved password can be deleted or replaced, but not viewed.
 
 ## Privacy
 

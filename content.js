@@ -70,6 +70,7 @@ async function getAccounts() {
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
       email: data.srm_email,
       password: data.srm_password,
+      enabled: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -84,15 +85,22 @@ async function getAccounts() {
 
 async function getPreferredAccount() {
   const { accounts, activeAccountId } = await getAccounts();
-  if (!accounts.length) return null;
+  const enabledAccounts = accounts
+    .filter((account) => account && account.email && account.password && account.enabled !== false)
+    .map((account) => ({
+      ...account,
+      email: normalizeEmail(account.email)
+    }));
+
+  if (!enabledAccounts.length) return null;
 
   const displayedEmail = findDisplayedEmail();
   if (displayedEmail) {
-    const matched = accounts.find((account) => normalizeEmail(account.email) === normalizeEmail(displayedEmail));
+    const matched = enabledAccounts.find((account) => account.email === normalizeEmail(displayedEmail));
     if (matched) return matched;
   }
 
-  return accounts.find((account) => account.id === activeAccountId) || accounts[0];
+  return enabledAccounts.find((account) => account.id === activeAccountId) || enabledAccounts[0];
 }
 
 function findDisplayedEmail() {

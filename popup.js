@@ -7,11 +7,9 @@
   const loginForm = document.getElementById('loginForm');
   const saveBtn = document.getElementById('saveBtn');
   const clearBtn = document.getElementById('clearBtn');
-  const savedBar = document.getElementById('savedBar');
-  const savedText = document.getElementById('savedText');
+  const accountsStatus = document.getElementById('accountsStatus');
   const accountList = document.getElementById('accountList');
   const statusMsg = document.getElementById('statusMsg');
-  const statusPip = document.getElementById('statusPip');
 
   if (!browserApi || !srmIdInput || !pwInput || !loginForm) return;
 
@@ -96,10 +94,9 @@
     const enabledCount = accounts.filter((account) => account.enabled).length;
     const hasAccounts = accounts.length > 0;
 
-    if (savedBar) savedBar.classList.toggle('visible', hasAccounts);
-    if (statusPip) statusPip.classList.toggle('on', enabledCount > 0);
-    if (savedText) {
-      savedText.textContent = `${enabledCount}/${accounts.length} accounts enabled`;
+    if (accountsStatus) {
+      accountsStatus.style.display = hasAccounts ? 'inline' : 'none';
+      accountsStatus.textContent = `${enabledCount}/${accounts.length} enabled`;
     }
 
     if (!accountList) return;

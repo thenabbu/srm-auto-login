@@ -23,6 +23,7 @@
       --border-mid:   #2e2e2e;
       --border-hover: #444444;
       --border-focus: #e0e0e0;
+      --border-active: #5a5a5a;
       --text:         #ececec;
       --text-2:       #b4b4b4;
       --text-3:       #747474;
@@ -117,7 +118,6 @@
 
     input::placeholder {
       color: var(--text-3);
-      font-style: italic;
     }
 
     input:hover {
@@ -288,7 +288,7 @@
 
     .account-row {
       display: grid;
-      grid-template-columns: 1fr auto auto;
+      grid-template-columns: 1fr auto auto auto;
       gap: 5px;
       align-items: center;
       padding: 6px 6px 6px 8px;
@@ -302,7 +302,7 @@
     }
 
     .account-row.enabled {
-      border-color: var(--border-focus);
+      border-color: var(--border-active);
       background: var(--surface-2);
     }
 
@@ -332,8 +332,13 @@
     }
 
     .account-toggle[aria-pressed="true"] {
-      border-color: var(--border-focus);
+      border-color: transparent;
       color: var(--text);
+    }
+
+    .account-toggle,
+    .account-toggle:hover {
+      border-color: transparent;
     }
 
     .btn-row {
@@ -454,7 +459,7 @@
       <label for="pwInput">Password</label>
       <div class="input-wrap">
         <input type="password" id="pwInput" class="has-toggle"
-          autocomplete="new-password" placeholder="new or replacement password" required />
+          autocomplete="new-password" />
         <button class="toggle-pw" id="togglePw" type="button" aria-label="Show password">
           <span class="material-symbols-rounded" aria-hidden="true">visibility</span>
         </button>

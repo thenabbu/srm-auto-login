@@ -5,6 +5,7 @@
   const pwInput = document.getElementById('pwInput');
   const togglePw = document.getElementById('togglePw');
   const loginForm = document.getElementById('loginForm');
+  const saveBtn = document.getElementById('saveBtn');
   const clearBtn = document.getElementById('clearBtn');
   const savedBar = document.getElementById('savedBar');
   const savedText = document.getElementById('savedText');
@@ -15,6 +16,7 @@
   if (!browserApi || !srmIdInput || !pwInput || !loginForm) return;
 
   let accounts = [];
+  let editingAccountId = '';
 
   const storage = {
     get(keys) {
@@ -126,6 +128,23 @@
         renderAccounts();
       });
 
+      const editBtn = document.createElement('button');
+      editBtn.className = 'account-action';
+      editBtn.type = 'button';
+      editBtn.setAttribute('aria-label', `Edit ${account.email}`);
+      editBtn.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">edit</span>';
+      editBtn.addEventListener('click', () => {
+        editingAccountId = account.id;
+        srmIdInput.value = normalizeSrmId(account.email);
+        pwInput.value = '';
+        pwInput.type = 'password';
+        togglePw.setAttribute('aria-label', 'Show password');
+        togglePw.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">visibility</span>';
+        if (saveBtn) saveBtn.textContent = 'Update account';
+        hideStatus();
+        pwInput.focus();
+      });
+
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'account-action';
       deleteBtn.type = 'button';
@@ -133,11 +152,12 @@
       deleteBtn.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">delete</span>';
       deleteBtn.addEventListener('click', async () => {
         accounts = accounts.filter((saved) => saved.id !== account.id);
+        if (editingAccountId === account.id) resetForm();
         await persistAccounts();
         renderAccounts();
       });
 
-      row.append(email, toggleBtn, deleteBtn);
+      row.append(email, toggleBtn, editBtn, deleteBtn);
       accountList.append(row);
     });
   }
@@ -152,8 +172,6 @@
   srmIdInput.addEventListener('input', () => {
     const cleaned = normalizeSrmId(srmIdInput.value).replace(/[^a-z0-9]/g, '').slice(0, 6);
     if (srmIdInput.value !== cleaned) srmIdInput.value = cleaned;
-    const match = accounts.find((account) => account.email === toEmail(cleaned));
-    pwInput.placeholder = match ? 'replacement password' : 'new password';
     hideStatus();
   });
 
@@ -161,31 +179,28 @@
     e.preventDefault();
     const srmId = normalizeSrmId(srmIdInput.value);
     const password = pwInput.value.trim();
+    const editingAccount = accounts.find((account) => account.id === editingAccountId);
 
     if (!isValidSrmId(srmId)) {
       showError('Use the SRM ID format: ab1234.');
       return;
     }
 
-    if (!password) {
+    if (!password && !editingAccount) {
       showError('Enter a password.');
       return;
     }
 
     const email = toEmail(srmId);
-    const existingIndex = accounts.findIndex((account) => account.email === email);
-    const existing = existingIndex >= 0 ? accounts[existingIndex] : null;
-    const account = createAccount(email, password, existing);
+    const existing = accounts.find((account) => account.email === email && account.id !== editingAccountId);
+    const source = editingAccount || existing || null;
+    const account = createAccount(email, password || source.password, source);
 
-    if (existingIndex >= 0) accounts[existingIndex] = account;
-    else accounts.push(account);
+    accounts = accounts.filter((saved) => saved.id !== editingAccountId && saved.email !== email);
+    accounts.push(account);
 
     await persistAccounts();
-    loginForm.reset();
-    pwInput.type = 'password';
-    togglePw.setAttribute('aria-label', 'Show password');
-    togglePw.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">visibility</span>';
-    pwInput.placeholder = 'new or replacement password';
+    resetForm();
     hideStatus();
     renderAccounts();
   });
@@ -194,10 +209,19 @@
     accounts = [];
     await persistAccounts();
     await storage.remove(['srm_email', 'srm_password', 'srm_active_account_id']);
-    loginForm.reset();
+    resetForm();
     hideStatus();
     renderAccounts();
   });
+
+  function resetForm() {
+    editingAccountId = '';
+    loginForm.reset();
+    pwInput.type = 'password';
+    togglePw.setAttribute('aria-label', 'Show password');
+    togglePw.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">visibility</span>';
+    if (saveBtn) saveBtn.textContent = 'Save account';
+  }
 
   function showError(msg) {
     if (!statusMsg) return;

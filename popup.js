@@ -217,16 +217,19 @@
     if (!logSection || !logBody) return;
 
     const data = await browserApi.storage.local.get("srm_login_log");
-    const log = Array.isArray(data.srm_login_log) ? data.srm_login_log : [];
+    let logs = Array.isArray(data.srm_login_log)
+      ? data.srm_login_log.slice()
+      : [];
+    logs.sort((a, b) => (b.ts || 0) - (a.ts || 0));
 
-    if (!log.length) {
+    if (!logs.length) {
       logSection.style.display = "none";
       return;
     }
     logSection.style.display = "block";
 
     logBody.textContent = "";
-    log.forEach((entry) => {
+    logs.forEach((entry) => {
       const row = document.createElement("div");
       row.className = `log-entry ${entry.action}`;
 

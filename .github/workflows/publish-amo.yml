@@ -16,7 +16,7 @@ jobs:
 
       - name: Build extension
         id: web-ext-build
-        uses: kewisch/action-web-ext@v1
+        uses: kewisch/action-web-ext@v2
         with:
           cmd: build
           source: .
@@ -30,3 +30,4 @@ jobs:
           channel: listed
           apiKey: ${{ secrets.AMO_JWT_ISSUER }}
           apiSecret: ${{ secrets.AMO_JWT_SECRET }}
+          approvalTimeout: 0

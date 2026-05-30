@@ -1,1483 +1,1582 @@
-diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
-index 5f2025a..de2cc4b 100644
---- a/.github/workflows/release.yml
-+++ b/.github/workflows/release.yml
-@@ -28,7 +28,7 @@ jobs:
-           fi
+diff --git a/.github/workflows/publish-amo.yml b/.github/workflows/publish-amo.yml
+index c492bd7..5a6e6ff 100644
+--- a/.github/workflows/publish-amo.yml
++++ b/.github/workflows/publish-amo.yml
+@@ -16,7 +16,7 @@ jobs:
  
-       - name: Package extension
--        run: zip -r "srm-auto-login-${GITHUB_REF_NAME}.zip" manifest.json popup.html popup.css popup.js content.js icons/
-+        run: zip -r "srm-auto-login-${GITHUB_REF_NAME}.zip" manifest.json popup.html popup.css popup.js content.js shared/ icons/
- 
-       - name: Create release
-         uses: softprops/action-gh-release@v2
-diff --git a/content.js b/content.js
-index b06f15e..550a7f7 100644
---- a/content.js
-+++ b/content.js
-@@ -1,34 +1,28 @@
--const browserApi = globalThis.browser || globalThis.chrome;
-+let currentTheme = "dark";
- 
--const storage = {
--  get(keys) {
--    if (globalThis.browser && browserApi === globalThis.browser) {
--      return browserApi.storage.local.get(keys);
--    }
--    return new Promise((resolve) => browserApi.storage.local.get(keys, resolve));
--  },
--  set(values) {
--    if (globalThis.browser && browserApi === globalThis.browser) {
--      return browserApi.storage.local.set(values);
--    }
--    return new Promise((resolve) => browserApi.storage.local.set(values, resolve));
--  },
--  remove(keys) {
--    if (globalThis.browser && browserApi === globalThis.browser) {
--      return browserApi.storage.local.remove(keys);
-+if (typeof browserApi !== "undefined" && browserApi.storage) {
-+  browserApi.storage.local.get("srm_theme").then((data) => {
-+    if (data.srm_theme) currentTheme = data.srm_theme;
-+  });
-+
-+  browserApi.storage.onChanged.addListener((changes) => {
-+    if (changes.srm_theme) {
-+      currentTheme = changes.srm_theme.newValue;
-+      document.querySelectorAll(".srm-theme-root").forEach((el) => {
-+        el.setAttribute("data-theme", currentTheme);
-+      });
-     }
--    return new Promise((resolve) => browserApi.storage.local.remove(keys, resolve));
--  }
--};
-+  });
-+}
- 
- function setReactValue(input, value) {
--  // React ignores plain .value= so we use the native setter.
-   const nativeSetter = Object.getOwnPropertyDescriptor(
--    window.HTMLInputElement.prototype, 'value'
-+    window.HTMLInputElement.prototype,
-+    "value",
-   ).set;
-   nativeSetter.call(input, value);
--  input.dispatchEvent(new Event('input', { bubbles: true }));
--  input.dispatchEvent(new Event('change', { bubbles: true }));
-+  input.dispatchEvent(new Event("input", { bubbles: true }));
-+  input.dispatchEvent(new Event("change", { bubbles: true }));
- }
- 
- function waitFor(selector, timeout = 8000) {
-@@ -38,46 +32,282 @@ function waitFor(selector, timeout = 8000) {
- 
-     const observer = new MutationObserver(() => {
-       const el = document.querySelector(selector);
--      if (el) { observer.disconnect(); resolve(el); }
-+      if (el) {
-+        observer.disconnect();
-+        resolve(el);
-+      }
-     });
- 
-     observer.observe(document.body || document.documentElement, {
--      childList: true, subtree: true
-+      childList: true,
-+      subtree: true,
-     });
- 
-     setTimeout(() => {
-       observer.disconnect();
--      reject(new Error(`Timeout: ${selector}`));
-+      reject(new Error(`Timeout waiting for: ${selector}`));
-     }, timeout);
-   });
- }
- 
- function delay(ms) {
--  return new Promise(r => setTimeout(r, ms));
-+  return new Promise((r) => setTimeout(r, ms));
-+}
-+
-+function isHalted() {
-+  return sessionStorage.getItem("srm_autologin_halted") === "1";
-+}
-+
-+function haltSession(reason) {
-+  sessionStorage.setItem("srm_autologin_halted", "1");
-+}
-+
-+function isChallengeScreen() {
-+  const url = location.href;
-+  if (
-+    url.includes("/challenge/pwd") ||
-+    url.includes("/signin/v2/sl/pwd") ||
-+    url.includes("/identifier") ||
-+    /accounts\.google\.com\/?$/.test(url)
-+  )
-+    return false;
-+
-+  const selectors = [
-+    "#totpPin",
-+    'input[name="totpPin"]',
-+    "[data-challengetype]",
-+    '[aria-label*="verification" i]',
-+    '[aria-label*="authenticator" i]',
-+    'iframe[src*="recaptcha"]',
-+    'iframe[src*="captcha"]',
-+  ];
-+  return selectors.some((sel) => document.querySelector(sel));
- }
- 
--function normalizeEmail(email) {
--  return String(email || '').trim().toLowerCase();
-+async function withRetry(fn, retryDelay = 3000) {
-+  try {
-+    await fn();
-+  } catch (e) {
-+    await delay(retryDelay);
-+    try {
-+      await fn();
-+    } catch (e2) {}
-+  }
-+}
-+
-+function injectStyles() {
-+  if (document.getElementById("srm-injected-styles")) return;
-+  const style = document.createElement("style");
-+  style.id = "srm-injected-styles";
-+  style.textContent = `
-+    #srm-al-toast.srm-theme-root,
-+    #srm-account-chooser.srm-theme-root {
-+      --bg: #080808;
-+      --surface: #111111;
-+      --surface-2: #171717;
-+      --border: #202020;
-+      --border-mid: #2e2e2e;
-+      --border-hover: #444444;
-+      --border-focus: #e0e0e0;
-+      --border-active: #5a5a5a;
-+      --text: #ececec;
-+      --text-2: #b4b4b4;
-+      --text-3: #747474;
-+      --radius: 3px;
-+    }
-+    
-+    #srm-al-toast.srm-theme-root[data-theme="light"],
-+    #srm-account-chooser.srm-theme-root[data-theme="light"] {
-+      --bg: #f7f7f7;
-+      --surface: #ffffff;
-+      --surface-2: #f0f0f0;
-+      --border: #e2e2e2;
-+      --border-mid: #d0d0d0;
-+      --border-hover: #aaaaaa;
-+      --border-focus: #111111;
-+      --border-active: #888888;
-+      --text: #111111;
-+      --text-2: #555555;
-+      --text-3: #999999;
-+    }
-+    
-+    #srm-al-toast {
-+      position: fixed !important;
-+      bottom: 20px !important;
-+      left: 20px !important;
-+      z-index: 2147483647 !important;
-+      background: var(--surface) !important;
-+      color: var(--text) !important;
-+      font-family: "IBM Plex Mono", "Courier New", monospace !important;
-+      font-size: 11px !important;
-+      line-height: 1.4 !important;
-+      letter-spacing: 0.02em !important;
-+      padding: 8px 12px !important;
-+      border-radius: var(--radius) !important;
-+      border: 1px solid var(--border-mid) !important;
-+      max-width: 240px !important;
-+      opacity: 0;
-+      transform: translateY(6px);
-+      transition: opacity 0.18s ease, transform 0.18s ease, background 0.2s ease, color 0.2s ease, border-color 0.2s ease !important;
-+      pointer-events: none !important;
-+      box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
-+    }
-+
-+    #srm-account-chooser {
-+      position: fixed !important;
-+      bottom: 20px !important;
-+      right: 20px !important;
-+      z-index: 2147483647 !important;
-+      background: var(--surface) !important;
-+      border: 1px solid var(--border-mid) !important;
-+      border-radius: var(--radius) !important;
-+      box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
-+      padding: 12px !important;
-+      font-family: "IBM Plex Mono", "Courier New", monospace !important;
-+      display: flex !important;
-+      flex-direction: column !important;
-+      gap: 8px !important;
-+      min-width: 220px !important;
-+      animation: srmSlideIn 0.2s ease-out !important;
-+      color: var(--text) !important;
-+      transition: background 0.2s ease, border-color 0.2s ease !important;
-+    }
-+
-+    #srm-account-chooser .srm-chooser-title {
-+      font-size: 9px !important;
-+      font-weight: 500 !important;
-+      text-transform: uppercase !important;
-+      letter-spacing: 0.08em !important;
-+      color: var(--text-3) !important;
-+      margin: 0 0 2px 0 !important;
-+      padding: 0 0 8px 0 !important;
-+      border-bottom: 1px solid var(--border-mid) !important;
-+      text-align: left !important;
-+      transition: color 0.2s ease, border-color 0.2s ease !important;
-+    }
-+
-+    #srm-account-chooser .srm-account-btn {
-+      background: var(--bg) !important;
-+      border: 1px solid var(--border-mid) !important;
-+      border-radius: var(--radius) !important;
-+      color: var(--text-2) !important;
-+      padding: 8px 10px !important;
-+      margin: 0 !important;
-+      font-family: inherit !important;
-+      font-size: 11px !important;
-+      cursor: pointer !important;
-+      text-align: left !important;
-+      transition: all 0.15s ease !important;
-+      outline: none !important;
-+    }
-+
-+    #srm-account-chooser .srm-account-btn:hover {
-+      background: var(--surface-2) !important;
-+      border-color: var(--border-hover) !important;
-+      color: var(--text) !important;
-+    }
-+    
-+    @keyframes srmSlideIn { 
-+      from { transform: translateY(10px); opacity: 0; } 
-+      to { transform: translateY(0); opacity: 1; } 
-+    }
-+  `;
-+  document.head.appendChild(style);
-+}
-+
-+function showToast(message) {
-+  injectStyles();
-+  document.getElementById("srm-al-toast")?.remove();
-+
-+  const toast = document.createElement("div");
-+  toast.id = "srm-al-toast";
-+  toast.className = "srm-theme-root";
-+  toast.setAttribute("data-theme", currentTheme);
-+  toast.textContent = message;
-+
-+  document.body.appendChild(toast);
-+
-+  requestAnimationFrame(() => {
-+    requestAnimationFrame(() => {
-+      toast.style.opacity = "1";
-+      toast.style.transform = "translateY(0)";
-+    });
-+  });
-+
-+  setTimeout(() => {
-+    toast.style.opacity = "0";
-+    toast.style.transform = "translateY(6px)";
-+    setTimeout(() => toast.remove(), 200);
-+  }, 2500);
-+}
-+
-+function showAccountChooser(accounts, onSelect) {
-+  injectStyles();
-+  document.getElementById("srm-account-chooser")?.remove();
-+
-+  const container = document.createElement("div");
-+  container.id = "srm-account-chooser";
-+  container.className = "srm-theme-root";
-+  container.setAttribute("data-theme", currentTheme);
-+
-+  const title = document.createElement("div");
-+  title.className = "srm-chooser-title";
-+  title.textContent = "Select Account";
-+  container.appendChild(title);
-+
-+  accounts.forEach((acc) => {
-+    const btn = document.createElement("button");
-+    btn.className = "srm-account-btn";
-+    btn.textContent = acc.email;
-+    btn.onclick = (e) => {
-+      e.preventDefault();
-+      container.remove();
-+      onSelect(acc);
-+    };
-+    container.appendChild(btn);
-+  });
-+
-+  document.body.appendChild(container);
-+}
-+
-+async function appendLog(action, email = "", detail = "") {
-+  try {
-+    const data = await browserApi.storage.local.get("srm_login_log");
-+    const log = Array.isArray(data.srm_login_log) ? data.srm_login_log : [];
-+    log.unshift({ ts: new Date().toISOString(), email, action, detail });
-+    if (log.length > 50) log.length = 50;
-+    await browserApi.storage.local.set({ srm_login_log: log });
-+  } catch (_) {}
- }
- 
- async function getAccounts() {
--  const data = await storage.get(['srm_accounts', 'srm_active_account_id', 'srm_email', 'srm_password']);
-+  const data = await browserApi.storage.local.get([
-+    "srm_accounts",
-+    "srm_active_account_id",
-+    "srm_email",
-+    "srm_password",
-+  ]);
-+
-   let accounts = Array.isArray(data.srm_accounts) ? data.srm_accounts : [];
--  let activeAccountId = data.srm_active_account_id || '';
-+  const activeAccountId = data.srm_active_account_id || "";
- 
-   if (!accounts.length && data.srm_email && data.srm_password) {
--    const migrated = {
-+    const migrated = normalizeAccount({
-       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-       email: data.srm_email,
-       password: data.srm_password,
-       enabled: true,
-       createdAt: new Date().toISOString(),
--      updatedAt: new Date().toISOString()
--    };
--    accounts = [migrated];
--    activeAccountId = migrated.id;
--    await storage.set({ srm_accounts: accounts, srm_active_account_id: activeAccountId });
--    await storage.remove(['srm_email', 'srm_password']);
-+      updatedAt: new Date().toISOString(),
-+    });
-+    accounts = migrated ? [migrated] : [];
-+    await browserApi.storage.local.set({
-+      srm_accounts: accounts,
-+      srm_active_account_id: migrated?.id ?? "",
-+    });
-+    await browserApi.storage.local.remove(["srm_email", "srm_password"]);
-+  } else {
-+    accounts = accounts.map(normalizeAccount).filter(Boolean);
-   }
- 
-   return { accounts, activeAccountId };
-@@ -85,138 +315,225 @@ async function getAccounts() {
- 
- async function getPreferredAccount() {
-   const { accounts, activeAccountId } = await getAccounts();
--  const enabledAccounts = accounts
--    .filter((account) => account && account.email && account.password && account.enabled !== false)
--    .map((account) => ({
--      ...account,
--      email: normalizeEmail(account.email)
--    }));
-+  const enabled = accounts.filter(
-+    (a) => a && a.email && a.password && a.enabled !== false,
-+  );
-+
-+  if (!enabled.length) return null;
- 
--  if (!enabledAccounts.length) return null;
-+  const chosenId = sessionStorage.getItem("srm_chosen_id");
-+  if (chosenId) {
-+    const picked = enabled.find((a) => a.id === chosenId);
-+    if (picked) return picked;
-+  }
- 
-   const displayedEmail = findDisplayedEmail();
-   if (displayedEmail) {
--    const matched = enabledAccounts.find((account) => account.email === normalizeEmail(displayedEmail));
-+    const matched = enabled.find(
-+      (a) => a.email === normalizeEmail(displayedEmail),
-+    );
-     if (matched) return matched;
-   }
- 
--  return enabledAccounts.find((account) => account.id === activeAccountId) || enabledAccounts[0];
-+  return enabled.find((a) => a.id === activeAccountId) || enabled[0];
- }
- 
- function findDisplayedEmail() {
--  const dataEmail = document.querySelector('[data-email]');
--  if (dataEmail && dataEmail.getAttribute('data-email')) {
--    return dataEmail.getAttribute('data-email');
-+  const dataEmail = document.querySelector("[data-email]");
-+  if (dataEmail?.getAttribute("data-email")) {
-+    return dataEmail.getAttribute("data-email");
-   }
- 
-   const candidates = [
--    ...document.querySelectorAll('[aria-label], [title], div, span')
-+    ...document.querySelectorAll("[aria-label], [title], div, span"),
-   ];
- 
-   for (const el of candidates) {
-     const values = [
--      el.getAttribute('aria-label'),
--      el.getAttribute('title'),
--      el.textContent
-+      el.getAttribute("aria-label"),
-+      el.getAttribute("title"),
-+      el.textContent,
-     ];
-     const found = values
-       .filter(Boolean)
--      .map((value) => value.match(/[a-z0-9._%+-]+@srmist\.edu\.in/i))
-+      .map((v) => v.match(/[a-z0-9._%+-]+@srmist\.edu\.in/i))
-       .find(Boolean);
-     if (found) return found[0];
-   }
- 
--  return '';
-+  return "";
- }
- 
- async function handleEmailStep() {
--  try {
--    const account = await getPreferredAccount();
--    if (!account || !account.email) {
--      console.warn('[SRM AutoLogin] No account saved.');
--      return;
--    }
-+  if (isHalted()) return;
-+
-+  const { accounts } = await getAccounts();
-+  const enabled = accounts.filter(
-+    (a) => a.enabled !== false && a.email && a.password,
-+  );
-+
-+  if (!enabled.length) {
-+    return;
-+  }
-+
-+  if (enabled.length >= 2) {
-+    showAccountChooser(enabled, async (selectedAccount) => {
-+      sessionStorage.setItem("srm_chosen_id", selectedAccount.id);
-+
-+      await withRetry(async () => {
-+        const emailInput = await waitFor('input[type="email"]');
- 
-+        emailInput.focus();
-+        setReactValue(emailInput, selectedAccount.email);
-+        showToast("Filling email...");
-+        await appendLog("filled_email", selectedAccount.email);
-+
-+        await delay(400);
-+        clickNext("identifier");
-+      });
-+    });
-+    return;
-+  }
-+
-+  await withRetry(async () => {
-+    const account = enabled[0];
-     const emailInput = await waitFor('input[type="email"]');
- 
--    if (normalizeEmail(emailInput.value) === normalizeEmail(account.email)) {
-+    if (normalizeEmail(emailInput.value) === account.email) {
-       await delay(300);
--      clickNext('identifier');
-+      clickNext("identifier");
-       return;
-     }
- 
-     await delay(400);
-     emailInput.focus();
-     setReactValue(emailInput, account.email);
-+    showToast("Filling email...");
-+    await appendLog("filled_email", account.email);
-     await delay(400);
--    clickNext('identifier');
--  } catch (e) {
--    console.warn('[SRM AutoLogin] Email step:', e.message);
--  }
-+    clickNext("identifier");
-+  });
- }
- 
- async function handlePasswordStep() {
--  try {
-+  if (isHalted()) return;
-+
-+  await withRetry(async () => {
-     const account = await getPreferredAccount();
-     if (!account || !account.password) {
--      console.warn('[SRM AutoLogin] No matching password saved.');
-+      return;
-+    }
-+
-+    const password = _decode(account.password);
-+    if (!password) {
-       return;
-     }
- 
-     const pwInput = await waitFor('input[type="password"]');
-     await delay(400);
-     pwInput.focus();
--    setReactValue(pwInput, account.password);
-+    setReactValue(pwInput, password);
-+    showToast("Filling password...");
-+    await appendLog("filled_password", account.email);
-     await delay(400);
--    clickNext('password');
--  } catch (e) {
--    console.warn('[SRM AutoLogin] Password step:', e.message);
--  }
-+    clickNext("password");
-+
-+    await delay(1800);
-+
-+    const stillOnPasswordPage =
-+      location.href.includes("/challenge/pwd") ||
-+      location.href.includes("/signin/v2/sl/pwd");
-+
-+    if (!stillOnPasswordPage) {
-+      try {
-+        browserApi.runtime.sendMessage({
-+          type: "srm_login_success",
-+          email: account.email,
-+        });
-+      } catch (_) {}
-+      return;
-+    }
-+
-+    const errorEl = document.querySelector(
-+      '[data-error-code], .Ekjuhf, [jsname="B34EJ"]',
-+    );
-+    if (errorEl && errorEl.innerText.trim()) {
-+      const reason = errorEl.innerText.trim();
-+      haltSession("Wrong password: " + reason);
-+      showToast("Wrong password \u2014 auto-login halted");
-+      await appendLog("error", account.email, reason);
-+      return;
-+    }
-+
-+    try {
-+      browserApi.runtime.sendMessage({
-+        type: "srm_login_success",
-+        email: account.email,
-+      });
-+    } catch (_) {}
-+  });
-+}
-+
-+async function handleConfirmIdentifier() {
-+  try {
-+    await delay(600);
-+    clickNext("identifier");
-+  } catch (e) {}
- }
- 
- function clickNext(step) {
-   const selectors =
--    step === 'identifier'
--      ? ['#identifierNext', '[data-idom-class="nCP5yc"] button', 'button[jsname="LgbsSe"]']
--      : ['#passwordNext', '[data-idom-class="nCP5yc"] button', 'button[jsname="LgbsSe"]'];
-+    step === "identifier"
-+      ? [
-+          "#identifierNext",
-+          '[data-idom-class="nCP5yc"] button',
-+          'button[jsname="LgbsSe"]',
-+        ]
-+      : [
-+          "#passwordNext",
-+          '[data-idom-class="nCP5yc"] button',
-+          'button[jsname="LgbsSe"]',
-+        ];
- 
-   for (const sel of selectors) {
-     const btn = document.querySelector(sel);
--    if (btn) { btn.click(); return; }
-+    if (btn) {
-+      btn.click();
-+      return;
-+    }
-   }
- 
--  const nextBtn = [...document.querySelectorAll('button')].find(b =>
--    b.innerText && /next|sign in|continue/i.test(b.innerText)
-+  const nextBtn = [...document.querySelectorAll("button")].find(
-+    (b) => b.innerText && /next|sign in|continue/i.test(b.innerText),
-   );
-   if (nextBtn) nextBtn.click();
- }
- 
--async function handleConfirmIdentifier() {
--  try {
--    await delay(600);
--    clickNext('identifier');
--  } catch (e) {
--    console.warn('[SRM AutoLogin] Confirm step:', e.message);
-+function route(url) {
-+  if (isHalted()) return;
-+
-+  if (isChallengeScreen()) {
-+    showToast("2FA detected \u2014 login paused");
-+    appendLog("2fa", "");
-+    return;
-   }
--}
- 
--function route(url) {
--  if (url.includes('/confirmidentifier')) {
-+  if (url.includes("/confirmidentifier")) {
-     handleConfirmIdentifier();
-     return;
-   }
- 
-   if (
--    url.includes('/identifier') ||
--    url.includes('/signin/v2/identifier') ||
--    url.includes('/v3/signin/identifier') ||
-+    url.includes("/identifier") ||
-+    url.includes("/signin/v2/identifier") ||
-+    url.includes("/v3/signin/identifier") ||
-     url.match(/accounts\.google\.com\/?$/)
-   ) {
-     handleEmailStep();
-     return;
-   }
- 
--  if (url.includes('/challenge/pwd') || url.includes('/signin/v2/sl/pwd')) {
-+  if (url.includes("/challenge/pwd") || url.includes("/signin/v2/sl/pwd")) {
-     handlePasswordStep();
-     return;
-   }
-@@ -233,10 +550,12 @@ if (browserApi && browserApi.storage) {
- }
- 
- let lastUrl = location.href;
--new MutationObserver(() => {
--  if (!browserApi || !browserApi.storage) return;
-+
-+const urlObserver = new MutationObserver(() => {
-   if (location.href !== lastUrl) {
-     lastUrl = location.href;
--    setTimeout(() => route(location.href), 300);
-+    setTimeout(() => route(location.href), 600);
-   }
--}).observe(document, { subtree: true, childList: true });
-+});
-+
-+urlObserver.observe(document.body, { childList: true, subtree: true });
+       - name: Build extension
+         id: web-ext-build
+-        uses: kewisch/action-web-ext@v1
++        uses: kewisch/action-web-ext@v2
+         with:
+           cmd: build
+           source: .
+@@ -29,4 +29,5 @@ jobs:
+           source: ${{ steps.web-ext-build.outputs.target }}
+           channel: listed
+           apiKey: ${{ secrets.AMO_JWT_ISSUER }}
+-          apiSecret: ${{ secrets.AMO_JWT_SECRET }}
+\ No newline at end of file
++          apiSecret: ${{ secrets.AMO_JWT_SECRET }}
++          approvalTimeout: 0
+\ No newline at end of file
+diff --git a/changes.diff b/changes.diff
+index 06c3355..e69de29 100644
+--- a/changes.diff
++++ b/changes.diff
+@@ -1,1483 +0,0 @@
+-diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+-index 5f2025a..de2cc4b 100644
+---- a/.github/workflows/release.yml
+-+++ b/.github/workflows/release.yml
+-@@ -28,7 +28,7 @@ jobs:
+-           fi
+- 
+-       - name: Package extension
+--        run: zip -r "srm-auto-login-${GITHUB_REF_NAME}.zip" manifest.json popup.html popup.css popup.js content.js icons/
+-+        run: zip -r "srm-auto-login-${GITHUB_REF_NAME}.zip" manifest.json popup.html popup.css popup.js content.js shared/ icons/
+- 
+-       - name: Create release
+-         uses: softprops/action-gh-release@v2
+-diff --git a/content.js b/content.js
+-index b06f15e..550a7f7 100644
+---- a/content.js
+-+++ b/content.js
+-@@ -1,34 +1,28 @@
+--const browserApi = globalThis.browser || globalThis.chrome;
+-+let currentTheme = "dark";
+- 
+--const storage = {
+--  get(keys) {
+--    if (globalThis.browser && browserApi === globalThis.browser) {
+--      return browserApi.storage.local.get(keys);
+--    }
+--    return new Promise((resolve) => browserApi.storage.local.get(keys, resolve));
+--  },
+--  set(values) {
+--    if (globalThis.browser && browserApi === globalThis.browser) {
+--      return browserApi.storage.local.set(values);
+--    }
+--    return new Promise((resolve) => browserApi.storage.local.set(values, resolve));
+--  },
+--  remove(keys) {
+--    if (globalThis.browser && browserApi === globalThis.browser) {
+--      return browserApi.storage.local.remove(keys);
+-+if (typeof browserApi !== "undefined" && browserApi.storage) {
+-+  browserApi.storage.local.get("srm_theme").then((data) => {
+-+    if (data.srm_theme) currentTheme = data.srm_theme;
+-+  });
+-+
+-+  browserApi.storage.onChanged.addListener((changes) => {
+-+    if (changes.srm_theme) {
+-+      currentTheme = changes.srm_theme.newValue;
+-+      document.querySelectorAll(".srm-theme-root").forEach((el) => {
+-+        el.setAttribute("data-theme", currentTheme);
+-+      });
+-     }
+--    return new Promise((resolve) => browserApi.storage.local.remove(keys, resolve));
+--  }
+--};
+-+  });
+-+}
+- 
+- function setReactValue(input, value) {
+--  // React ignores plain .value= so we use the native setter.
+-   const nativeSetter = Object.getOwnPropertyDescriptor(
+--    window.HTMLInputElement.prototype, 'value'
+-+    window.HTMLInputElement.prototype,
+-+    "value",
+-   ).set;
+-   nativeSetter.call(input, value);
+--  input.dispatchEvent(new Event('input', { bubbles: true }));
+--  input.dispatchEvent(new Event('change', { bubbles: true }));
+-+  input.dispatchEvent(new Event("input", { bubbles: true }));
+-+  input.dispatchEvent(new Event("change", { bubbles: true }));
+- }
+- 
+- function waitFor(selector, timeout = 8000) {
+-@@ -38,46 +32,282 @@ function waitFor(selector, timeout = 8000) {
+- 
+-     const observer = new MutationObserver(() => {
+-       const el = document.querySelector(selector);
+--      if (el) { observer.disconnect(); resolve(el); }
+-+      if (el) {
+-+        observer.disconnect();
+-+        resolve(el);
+-+      }
+-     });
+- 
+-     observer.observe(document.body || document.documentElement, {
+--      childList: true, subtree: true
+-+      childList: true,
+-+      subtree: true,
+-     });
+- 
+-     setTimeout(() => {
+-       observer.disconnect();
+--      reject(new Error(`Timeout: ${selector}`));
+-+      reject(new Error(`Timeout waiting for: ${selector}`));
+-     }, timeout);
+-   });
+- }
+- 
+- function delay(ms) {
+--  return new Promise(r => setTimeout(r, ms));
+-+  return new Promise((r) => setTimeout(r, ms));
+-+}
+-+
+-+function isHalted() {
+-+  return sessionStorage.getItem("srm_autologin_halted") === "1";
+-+}
+-+
+-+function haltSession(reason) {
+-+  sessionStorage.setItem("srm_autologin_halted", "1");
+-+}
+-+
+-+function isChallengeScreen() {
+-+  const url = location.href;
+-+  if (
+-+    url.includes("/challenge/pwd") ||
+-+    url.includes("/signin/v2/sl/pwd") ||
+-+    url.includes("/identifier") ||
+-+    /accounts\.google\.com\/?$/.test(url)
+-+  )
+-+    return false;
+-+
+-+  const selectors = [
+-+    "#totpPin",
+-+    'input[name="totpPin"]',
+-+    "[data-challengetype]",
+-+    '[aria-label*="verification" i]',
+-+    '[aria-label*="authenticator" i]',
+-+    'iframe[src*="recaptcha"]',
+-+    'iframe[src*="captcha"]',
+-+  ];
+-+  return selectors.some((sel) => document.querySelector(sel));
+- }
+- 
+--function normalizeEmail(email) {
+--  return String(email || '').trim().toLowerCase();
+-+async function withRetry(fn, retryDelay = 3000) {
+-+  try {
+-+    await fn();
+-+  } catch (e) {
+-+    await delay(retryDelay);
+-+    try {
+-+      await fn();
+-+    } catch (e2) {}
+-+  }
+-+}
+-+
+-+function injectStyles() {
+-+  if (document.getElementById("srm-injected-styles")) return;
+-+  const style = document.createElement("style");
+-+  style.id = "srm-injected-styles";
+-+  style.textContent = `
+-+    #srm-al-toast.srm-theme-root,
+-+    #srm-account-chooser.srm-theme-root {
+-+      --bg: #080808;
+-+      --surface: #111111;
+-+      --surface-2: #171717;
+-+      --border: #202020;
+-+      --border-mid: #2e2e2e;
+-+      --border-hover: #444444;
+-+      --border-focus: #e0e0e0;
+-+      --border-active: #5a5a5a;
+-+      --text: #ececec;
+-+      --text-2: #b4b4b4;
+-+      --text-3: #747474;
+-+      --radius: 3px;
+-+    }
+-+    
+-+    #srm-al-toast.srm-theme-root[data-theme="light"],
+-+    #srm-account-chooser.srm-theme-root[data-theme="light"] {
+-+      --bg: #f7f7f7;
+-+      --surface: #ffffff;
+-+      --surface-2: #f0f0f0;
+-+      --border: #e2e2e2;
+-+      --border-mid: #d0d0d0;
+-+      --border-hover: #aaaaaa;
+-+      --border-focus: #111111;
+-+      --border-active: #888888;
+-+      --text: #111111;
+-+      --text-2: #555555;
+-+      --text-3: #999999;
+-+    }
+-+    
+-+    #srm-al-toast {
+-+      position: fixed !important;
+-+      bottom: 20px !important;
+-+      left: 20px !important;
+-+      z-index: 2147483647 !important;
+-+      background: var(--surface) !important;
+-+      color: var(--text) !important;
+-+      font-family: "IBM Plex Mono", "Courier New", monospace !important;
+-+      font-size: 11px !important;
+-+      line-height: 1.4 !important;
+-+      letter-spacing: 0.02em !important;
+-+      padding: 8px 12px !important;
+-+      border-radius: var(--radius) !important;
+-+      border: 1px solid var(--border-mid) !important;
+-+      max-width: 240px !important;
+-+      opacity: 0;
+-+      transform: translateY(6px);
+-+      transition: opacity 0.18s ease, transform 0.18s ease, background 0.2s ease, color 0.2s ease, border-color 0.2s ease !important;
+-+      pointer-events: none !important;
+-+      box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
+-+    }
+-+
+-+    #srm-account-chooser {
+-+      position: fixed !important;
+-+      bottom: 20px !important;
+-+      right: 20px !important;
+-+      z-index: 2147483647 !important;
+-+      background: var(--surface) !important;
+-+      border: 1px solid var(--border-mid) !important;
+-+      border-radius: var(--radius) !important;
+-+      box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
+-+      padding: 12px !important;
+-+      font-family: "IBM Plex Mono", "Courier New", monospace !important;
+-+      display: flex !important;
+-+      flex-direction: column !important;
+-+      gap: 8px !important;
+-+      min-width: 220px !important;
+-+      animation: srmSlideIn 0.2s ease-out !important;
+-+      color: var(--text) !important;
+-+      transition: background 0.2s ease, border-color 0.2s ease !important;
+-+    }
+-+
+-+    #srm-account-chooser .srm-chooser-title {
+-+      font-size: 9px !important;
+-+      font-weight: 500 !important;
+-+      text-transform: uppercase !important;
+-+      letter-spacing: 0.08em !important;
+-+      color: var(--text-3) !important;
+-+      margin: 0 0 2px 0 !important;
+-+      padding: 0 0 8px 0 !important;
+-+      border-bottom: 1px solid var(--border-mid) !important;
+-+      text-align: left !important;
+-+      transition: color 0.2s ease, border-color 0.2s ease !important;
+-+    }
+-+
+-+    #srm-account-chooser .srm-account-btn {
+-+      background: var(--bg) !important;
+-+      border: 1px solid var(--border-mid) !important;
+-+      border-radius: var(--radius) !important;
+-+      color: var(--text-2) !important;
+-+      padding: 8px 10px !important;
+-+      margin: 0 !important;
+-+      font-family: inherit !important;
+-+      font-size: 11px !important;
+-+      cursor: pointer !important;
+-+      text-align: left !important;
+-+      transition: all 0.15s ease !important;
+-+      outline: none !important;
+-+    }
+-+
+-+    #srm-account-chooser .srm-account-btn:hover {
+-+      background: var(--surface-2) !important;
+-+      border-color: var(--border-hover) !important;
+-+      color: var(--text) !important;
+-+    }
+-+    
+-+    @keyframes srmSlideIn { 
+-+      from { transform: translateY(10px); opacity: 0; } 
+-+      to { transform: translateY(0); opacity: 1; } 
+-+    }
+-+  `;
+-+  document.head.appendChild(style);
+-+}
+-+
+-+function showToast(message) {
+-+  injectStyles();
+-+  document.getElementById("srm-al-toast")?.remove();
+-+
+-+  const toast = document.createElement("div");
+-+  toast.id = "srm-al-toast";
+-+  toast.className = "srm-theme-root";
+-+  toast.setAttribute("data-theme", currentTheme);
+-+  toast.textContent = message;
+-+
+-+  document.body.appendChild(toast);
+-+
+-+  requestAnimationFrame(() => {
+-+    requestAnimationFrame(() => {
+-+      toast.style.opacity = "1";
+-+      toast.style.transform = "translateY(0)";
+-+    });
+-+  });
+-+
+-+  setTimeout(() => {
+-+    toast.style.opacity = "0";
+-+    toast.style.transform = "translateY(6px)";
+-+    setTimeout(() => toast.remove(), 200);
+-+  }, 2500);
+-+}
+-+
+-+function showAccountChooser(accounts, onSelect) {
+-+  injectStyles();
+-+  document.getElementById("srm-account-chooser")?.remove();
+-+
+-+  const container = document.createElement("div");
+-+  container.id = "srm-account-chooser";
+-+  container.className = "srm-theme-root";
+-+  container.setAttribute("data-theme", currentTheme);
+-+
+-+  const title = document.createElement("div");
+-+  title.className = "srm-chooser-title";
+-+  title.textContent = "Select Account";
+-+  container.appendChild(title);
+-+
+-+  accounts.forEach((acc) => {
+-+    const btn = document.createElement("button");
+-+    btn.className = "srm-account-btn";
+-+    btn.textContent = acc.email;
+-+    btn.onclick = (e) => {
+-+      e.preventDefault();
+-+      container.remove();
+-+      onSelect(acc);
+-+    };
+-+    container.appendChild(btn);
+-+  });
+-+
+-+  document.body.appendChild(container);
+-+}
+-+
+-+async function appendLog(action, email = "", detail = "") {
+-+  try {
+-+    const data = await browserApi.storage.local.get("srm_login_log");
+-+    const log = Array.isArray(data.srm_login_log) ? data.srm_login_log : [];
+-+    log.unshift({ ts: new Date().toISOString(), email, action, detail });
+-+    if (log.length > 50) log.length = 50;
+-+    await browserApi.storage.local.set({ srm_login_log: log });
+-+  } catch (_) {}
+- }
+- 
+- async function getAccounts() {
+--  const data = await storage.get(['srm_accounts', 'srm_active_account_id', 'srm_email', 'srm_password']);
+-+  const data = await browserApi.storage.local.get([
+-+    "srm_accounts",
+-+    "srm_active_account_id",
+-+    "srm_email",
+-+    "srm_password",
+-+  ]);
+-+
+-   let accounts = Array.isArray(data.srm_accounts) ? data.srm_accounts : [];
+--  let activeAccountId = data.srm_active_account_id || '';
+-+  const activeAccountId = data.srm_active_account_id || "";
+- 
+-   if (!accounts.length && data.srm_email && data.srm_password) {
+--    const migrated = {
+-+    const migrated = normalizeAccount({
+-       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+-       email: data.srm_email,
+-       password: data.srm_password,
+-       enabled: true,
+-       createdAt: new Date().toISOString(),
+--      updatedAt: new Date().toISOString()
+--    };
+--    accounts = [migrated];
+--    activeAccountId = migrated.id;
+--    await storage.set({ srm_accounts: accounts, srm_active_account_id: activeAccountId });
+--    await storage.remove(['srm_email', 'srm_password']);
+-+      updatedAt: new Date().toISOString(),
+-+    });
+-+    accounts = migrated ? [migrated] : [];
+-+    await browserApi.storage.local.set({
+-+      srm_accounts: accounts,
+-+      srm_active_account_id: migrated?.id ?? "",
+-+    });
+-+    await browserApi.storage.local.remove(["srm_email", "srm_password"]);
+-+  } else {
+-+    accounts = accounts.map(normalizeAccount).filter(Boolean);
+-   }
+- 
+-   return { accounts, activeAccountId };
+-@@ -85,138 +315,225 @@ async function getAccounts() {
+- 
+- async function getPreferredAccount() {
+-   const { accounts, activeAccountId } = await getAccounts();
+--  const enabledAccounts = accounts
+--    .filter((account) => account && account.email && account.password && account.enabled !== false)
+--    .map((account) => ({
+--      ...account,
+--      email: normalizeEmail(account.email)
+--    }));
+-+  const enabled = accounts.filter(
+-+    (a) => a && a.email && a.password && a.enabled !== false,
+-+  );
+-+
+-+  if (!enabled.length) return null;
+- 
+--  if (!enabledAccounts.length) return null;
+-+  const chosenId = sessionStorage.getItem("srm_chosen_id");
+-+  if (chosenId) {
+-+    const picked = enabled.find((a) => a.id === chosenId);
+-+    if (picked) return picked;
+-+  }
+- 
+-   const displayedEmail = findDisplayedEmail();
+-   if (displayedEmail) {
+--    const matched = enabledAccounts.find((account) => account.email === normalizeEmail(displayedEmail));
+-+    const matched = enabled.find(
+-+      (a) => a.email === normalizeEmail(displayedEmail),
+-+    );
+-     if (matched) return matched;
+-   }
+- 
+--  return enabledAccounts.find((account) => account.id === activeAccountId) || enabledAccounts[0];
+-+  return enabled.find((a) => a.id === activeAccountId) || enabled[0];
+- }
+- 
+- function findDisplayedEmail() {
+--  const dataEmail = document.querySelector('[data-email]');
+--  if (dataEmail && dataEmail.getAttribute('data-email')) {
+--    return dataEmail.getAttribute('data-email');
+-+  const dataEmail = document.querySelector("[data-email]");
+-+  if (dataEmail?.getAttribute("data-email")) {
+-+    return dataEmail.getAttribute("data-email");
+-   }
+- 
+-   const candidates = [
+--    ...document.querySelectorAll('[aria-label], [title], div, span')
+-+    ...document.querySelectorAll("[aria-label], [title], div, span"),
+-   ];
+- 
+-   for (const el of candidates) {
+-     const values = [
+--      el.getAttribute('aria-label'),
+--      el.getAttribute('title'),
+--      el.textContent
+-+      el.getAttribute("aria-label"),
+-+      el.getAttribute("title"),
+-+      el.textContent,
+-     ];
+-     const found = values
+-       .filter(Boolean)
+--      .map((value) => value.match(/[a-z0-9._%+-]+@srmist\.edu\.in/i))
+-+      .map((v) => v.match(/[a-z0-9._%+-]+@srmist\.edu\.in/i))
+-       .find(Boolean);
+-     if (found) return found[0];
+-   }
+- 
+--  return '';
+-+  return "";
+- }
+- 
+- async function handleEmailStep() {
+--  try {
+--    const account = await getPreferredAccount();
+--    if (!account || !account.email) {
+--      console.warn('[SRM AutoLogin] No account saved.');
+--      return;
+--    }
+-+  if (isHalted()) return;
+-+
+-+  const { accounts } = await getAccounts();
+-+  const enabled = accounts.filter(
+-+    (a) => a.enabled !== false && a.email && a.password,
+-+  );
+-+
+-+  if (!enabled.length) {
+-+    return;
+-+  }
+-+
+-+  if (enabled.length >= 2) {
+-+    showAccountChooser(enabled, async (selectedAccount) => {
+-+      sessionStorage.setItem("srm_chosen_id", selectedAccount.id);
+-+
+-+      await withRetry(async () => {
+-+        const emailInput = await waitFor('input[type="email"]');
+- 
+-+        emailInput.focus();
+-+        setReactValue(emailInput, selectedAccount.email);
+-+        showToast("Filling email...");
+-+        await appendLog("filled_email", selectedAccount.email);
+-+
+-+        await delay(400);
+-+        clickNext("identifier");
+-+      });
+-+    });
+-+    return;
+-+  }
+-+
+-+  await withRetry(async () => {
+-+    const account = enabled[0];
+-     const emailInput = await waitFor('input[type="email"]');
+- 
+--    if (normalizeEmail(emailInput.value) === normalizeEmail(account.email)) {
+-+    if (normalizeEmail(emailInput.value) === account.email) {
+-       await delay(300);
+--      clickNext('identifier');
+-+      clickNext("identifier");
+-       return;
+-     }
+- 
+-     await delay(400);
+-     emailInput.focus();
+-     setReactValue(emailInput, account.email);
+-+    showToast("Filling email...");
+-+    await appendLog("filled_email", account.email);
+-     await delay(400);
+--    clickNext('identifier');
+--  } catch (e) {
+--    console.warn('[SRM AutoLogin] Email step:', e.message);
+--  }
+-+    clickNext("identifier");
+-+  });
+- }
+- 
+- async function handlePasswordStep() {
+--  try {
+-+  if (isHalted()) return;
+-+
+-+  await withRetry(async () => {
+-     const account = await getPreferredAccount();
+-     if (!account || !account.password) {
+--      console.warn('[SRM AutoLogin] No matching password saved.');
+-+      return;
+-+    }
+-+
+-+    const password = _decode(account.password);
+-+    if (!password) {
+-       return;
+-     }
+- 
+-     const pwInput = await waitFor('input[type="password"]');
+-     await delay(400);
+-     pwInput.focus();
+--    setReactValue(pwInput, account.password);
+-+    setReactValue(pwInput, password);
+-+    showToast("Filling password...");
+-+    await appendLog("filled_password", account.email);
+-     await delay(400);
+--    clickNext('password');
+--  } catch (e) {
+--    console.warn('[SRM AutoLogin] Password step:', e.message);
+--  }
+-+    clickNext("password");
+-+
+-+    await delay(1800);
+-+
+-+    const stillOnPasswordPage =
+-+      location.href.includes("/challenge/pwd") ||
+-+      location.href.includes("/signin/v2/sl/pwd");
+-+
+-+    if (!stillOnPasswordPage) {
+-+      try {
+-+        browserApi.runtime.sendMessage({
+-+          type: "srm_login_success",
+-+          email: account.email,
+-+        });
+-+      } catch (_) {}
+-+      return;
+-+    }
+-+
+-+    const errorEl = document.querySelector(
+-+      '[data-error-code], .Ekjuhf, [jsname="B34EJ"]',
+-+    );
+-+    if (errorEl && errorEl.innerText.trim()) {
+-+      const reason = errorEl.innerText.trim();
+-+      haltSession("Wrong password: " + reason);
+-+      showToast("Wrong password \u2014 auto-login halted");
+-+      await appendLog("error", account.email, reason);
+-+      return;
+-+    }
+-+
+-+    try {
+-+      browserApi.runtime.sendMessage({
+-+        type: "srm_login_success",
+-+        email: account.email,
+-+      });
+-+    } catch (_) {}
+-+  });
+-+}
+-+
+-+async function handleConfirmIdentifier() {
+-+  try {
+-+    await delay(600);
+-+    clickNext("identifier");
+-+  } catch (e) {}
+- }
+- 
+- function clickNext(step) {
+-   const selectors =
+--    step === 'identifier'
+--      ? ['#identifierNext', '[data-idom-class="nCP5yc"] button', 'button[jsname="LgbsSe"]']
+--      : ['#passwordNext', '[data-idom-class="nCP5yc"] button', 'button[jsname="LgbsSe"]'];
+-+    step === "identifier"
+-+      ? [
+-+          "#identifierNext",
+-+          '[data-idom-class="nCP5yc"] button',
+-+          'button[jsname="LgbsSe"]',
+-+        ]
+-+      : [
+-+          "#passwordNext",
+-+          '[data-idom-class="nCP5yc"] button',
+-+          'button[jsname="LgbsSe"]',
+-+        ];
+- 
+-   for (const sel of selectors) {
+-     const btn = document.querySelector(sel);
+--    if (btn) { btn.click(); return; }
+-+    if (btn) {
+-+      btn.click();
+-+      return;
+-+    }
+-   }
+- 
+--  const nextBtn = [...document.querySelectorAll('button')].find(b =>
+--    b.innerText && /next|sign in|continue/i.test(b.innerText)
+-+  const nextBtn = [...document.querySelectorAll("button")].find(
+-+    (b) => b.innerText && /next|sign in|continue/i.test(b.innerText),
+-   );
+-   if (nextBtn) nextBtn.click();
+- }
+- 
+--async function handleConfirmIdentifier() {
+--  try {
+--    await delay(600);
+--    clickNext('identifier');
+--  } catch (e) {
+--    console.warn('[SRM AutoLogin] Confirm step:', e.message);
+-+function route(url) {
+-+  if (isHalted()) return;
+-+
+-+  if (isChallengeScreen()) {
+-+    showToast("2FA detected \u2014 login paused");
+-+    appendLog("2fa", "");
+-+    return;
+-   }
+--}
+- 
+--function route(url) {
+--  if (url.includes('/confirmidentifier')) {
+-+  if (url.includes("/confirmidentifier")) {
+-     handleConfirmIdentifier();
+-     return;
+-   }
+- 
+-   if (
+--    url.includes('/identifier') ||
+--    url.includes('/signin/v2/identifier') ||
+--    url.includes('/v3/signin/identifier') ||
+-+    url.includes("/identifier") ||
+-+    url.includes("/signin/v2/identifier") ||
+-+    url.includes("/v3/signin/identifier") ||
+-     url.match(/accounts\.google\.com\/?$/)
+-   ) {
+-     handleEmailStep();
+-     return;
+-   }
+- 
+--  if (url.includes('/challenge/pwd') || url.includes('/signin/v2/sl/pwd')) {
+-+  if (url.includes("/challenge/pwd") || url.includes("/signin/v2/sl/pwd")) {
+-     handlePasswordStep();
+-     return;
+-   }
+-@@ -233,10 +550,12 @@ if (browserApi && browserApi.storage) {
+- }
+- 
+- let lastUrl = location.href;
+--new MutationObserver(() => {
+--  if (!browserApi || !browserApi.storage) return;
+-+
+-+const urlObserver = new MutationObserver(() => {
+-   if (location.href !== lastUrl) {
+-     lastUrl = location.href;
+--    setTimeout(() => route(location.href), 300);
+-+    setTimeout(() => route(location.href), 600);
+-   }
+--}).observe(document, { subtree: true, childList: true });
+-+});
+-+
+-+urlObserver.observe(document.body, { childList: true, subtree: true });
+-diff --git a/manifest.json b/manifest.json
+-index f427b1d..3d482ad 100644
+---- a/manifest.json
+-+++ b/manifest.json
+-@@ -1,9 +1,9 @@
+- {
+-   "manifest_version": 3,
+-   "name": "SRM Auto Login",
+--  "version": "1.4.2",
+-+  "version": "2.0.0",
+-   "description": "Automatically logs into SRM Google account",
+--  "permissions": ["storage", "activeTab"],
+-+  "permissions": ["storage"],
+-   "host_permissions": ["https://accounts.google.com/*"],
+-   "icons": {
+-     "16": "icons/icon16.png",
+-@@ -15,7 +15,7 @@
+-   "content_scripts": [
+-     {
+-       "matches": ["https://accounts.google.com/*"],
+--      "js": ["content.js"],
+-+      "js": ["shared/storage.js", "content.js"],
+-       "run_at": "document_idle"
+-     }
+-   ],
+-@@ -38,4 +38,4 @@
+-       }
+-     }
+-   }
+--}
+-+}
+-\ No newline at end of file
+-diff --git a/popup.css b/popup.css
+-index 3f5853f..81a7d58 100644
+---- a/popup.css
+-+++ b/popup.css
+-@@ -21,6 +21,20 @@
+-   --radius: 3px;
+- }
+- 
+-+:root[data-theme="light"] {
+-+  --bg: #f7f7f7;
+-+  --surface: #ffffff;
+-+  --surface-2: #f0f0f0;
+-+  --border: #e2e2e2;
+-+  --border-mid: #d0d0d0;
+-+  --border-hover: #aaaaaa;
+-+  --border-focus: #111111;
+-+  --border-active: #888888;
+-+  --text: #111111;
+-+  --text-2: #555555;
+-+  --text-3: #999999;
+-+}
+-+
+- html,
+- body {
+-   width: 280px;
+-@@ -31,6 +45,9 @@ body {
+-   line-height: 1.5;
+-   -webkit-font-smoothing: antialiased;
+-   -moz-osx-font-smoothing: grayscale;
+-+  transition:
+-+    background 0.15s ease,
+-+    color 0.15s ease;
+- }
+- 
+- .header {
+-@@ -48,15 +65,80 @@ body {
+-   color: var(--text);
+- }
+- 
+-+.header-right {
+-+  display: flex;
+-+  align-items: center;
+-+  gap: 6px;
+-+  flex-shrink: 0;
+-+}
+-+
+-+.theme-toggle {
+-+  background: none;
+-+  border: none;
+-+  cursor: pointer;
+-+  color: var(--text-2);
+-+  display: flex;
+-+  align-items: center;
+-+  padding: 0;
+-+  margin-right: 4px;
+-+  transition: color 0.15s ease;
+-+  outline: none;
+-+}
+-+
+-+.theme-toggle:hover,
+-+.theme-toggle:focus-visible {
+-+  color: var(--text);
+-+}
+-+
+-+.theme-toggle .material-symbols-rounded {
+-+  font-size: 15px;
+-+}
+-+
+-+.version-display {
+-+  font-family: "IBM Plex Mono", monospace;
+-+  font-size: 9px;
+-+  color: var(--text-3);
+-+  letter-spacing: 0.02em;
+-+}
+-+
+- .accounts-status {
+--  font-family: 'IBM Plex Mono', monospace;
+-+  font-family: "IBM Plex Mono", monospace;
+-   font-size: 9px;
+-   color: var(--text-2);
+-   letter-spacing: 0.02em;
+-   white-space: nowrap;
+-+}
+-+
+-+.update-banner {
+-+  padding: 6px 14px;
+-+  border-bottom: 1px solid var(--border);
+-+  background: var(--surface);
+-+  font-family: "IBM Plex Mono", monospace;
+-+  font-size: 9px;
+-+  color: var(--text-2);
+-+  letter-spacing: 0.02em;
+-+  display: flex;
+-+  align-items: center;
+-+  gap: 4px;
+-+}
+-+
+-+.update-banner::before {
+-+  content: "\2191";
+-+  color: var(--text);
+-+  font-size: 10px;
+-   flex-shrink: 0;
+- }
+- 
+-+.update-banner a {
+-+  color: var(--text);
+-+  text-decoration: underline;
+-+  text-underline-offset: 2px;
+-+}
+-+
+-+.update-banner a:hover {
+-+  opacity: 0.75;
+-+}
+-+
+- form {
+-   padding: 13px 14px 11px;
+-   display: flex;
+-@@ -210,6 +292,20 @@ input:-webkit-autofill:focus {
+-   white-space: nowrap;
+- }
+- 
+-+.toggle-pw:hover {
+-+  color: var(--text);
+-+  border-color: var(--border-hover);
+-+  background: rgba(255, 255, 255, 0.03);
+-+}
+-+
+-+.toggle-pw:active {
+-+  background: rgba(255, 255, 255, 0.06);
+-+}
+-+
+-+input:focus ~ .toggle-pw {
+-+  border-left-color: var(--border-focus);
+-+}
+-+
+- .material-symbols-rounded {
+-   font-family: "Material Symbols Rounded";
+-   font-weight: normal;
+-@@ -227,20 +323,6 @@ input:-webkit-autofill:focus {
+-   font-variation-settings: "FILL" 0;
+- }
+- 
+--.toggle-pw:hover {
+--  color: var(--text);
+--  border-color: var(--border-hover);
+--  background: rgba(255, 255, 255, 0.03);
+--}
+--
+--.toggle-pw:active {
+--  background: rgba(255, 255, 255, 0.06);
+--}
+--
+--input:focus ~ .toggle-pw {
+--  border-left-color: var(--border-focus);
+--}
+--
+- .account-list {
+-   display: none;
+-   flex-direction: column;
+-@@ -253,7 +335,7 @@ input:focus ~ .toggle-pw {
+- 
+- .account-row {
+-   display: grid;
+--  grid-template-columns: 1fr auto auto auto;
+-+  grid-template-columns: 1fr auto auto auto auto;
+-   gap: 5px;
+-   align-items: center;
+-   padding: 6px 6px 6px 8px;
+-@@ -280,6 +362,14 @@ input:focus ~ .toggle-pw {
+-   color: var(--text);
+- }
+- 
+-+.account-last-used {
+-+  font-family: "IBM Plex Mono", monospace;
+-+  font-size: 9px;
+-+  color: var(--text-3);
+-+  letter-spacing: 0.02em;
+-+  white-space: nowrap;
+-+}
+-+
+- .account-action {
+-   width: 26px;
+-   height: 24px;
+-@@ -289,6 +379,7 @@ input:focus ~ .toggle-pw {
+-   background: transparent;
+-   border: 1px solid var(--border-mid);
+-   color: var(--text-2);
+-+  border-radius: var(--radius);
+- }
+- 
+- .account-action:hover {
+-@@ -347,6 +438,7 @@ button.primary {
+- button.primary:hover {
+-   opacity: 0.88;
+- }
+-+
+- button.primary:active {
+-   opacity: 0.72;
+- }
+-@@ -388,6 +480,86 @@ button.secondary:active {
+-   background: var(--border);
+- }
+- 
+-+.log-toggle {
+-+  width: 100%;
+-+  padding: 7px 14px;
+-+  background: transparent;
+-+  border: none;
+-+  border-radius: 0;
+-+  color: var(--text-3);
+-+  font-family: "IBM Plex Mono", monospace;
+-+  font-size: 9px;
+-+  font-weight: 500;
+-+  text-transform: uppercase;
+-+  letter-spacing: 0.08em;
+-+  display: flex;
+-+  align-items: center;
+-+  gap: 6px;
+-+  cursor: pointer;
+-+  text-align: left;
+-+}
+-+
+-+.log-toggle:hover {
+-+  color: var(--text-2);
+-+  background: var(--surface);
+-+}
+-+
+-+.log-toggle .material-symbols-rounded {
+-+  font-size: 14px;
+-+}
+-+
+-+.log-chevron {
+-+  margin-left: auto;
+-+  transition: transform 0.15s ease;
+-+}
+-+
+-+.log-chevron.open {
+-+  transform: rotate(180deg);
+-+}
+-+
+-+.log-body {
+-+  padding: 4px 14px 10px;
+-+  display: flex;
+-+  flex-direction: column;
+-+  gap: 3px;
+-+}
+-+
+-+.log-entry {
+-+  display: grid;
+-+  grid-template-columns: auto 1fr auto;
+-+  gap: 6px;
+-+  align-items: baseline;
+-+  font-family: "IBM Plex Mono", monospace;
+-+  font-size: 9px;
+-+  color: var(--text-3);
+-+  letter-spacing: 0.01em;
+-+  line-height: 1.6;
+-+}
+-+
+-+.log-entry-time {
+-+  color: var(--text-3);
+-+  white-space: nowrap;
+-+}
+-+
+-+.log-entry-action {
+-+  color: var(--text-2);
+-+}
+-+
+-+.log-entry-email {
+-+  color: var(--text-3);
+-+  overflow: hidden;
+-+  text-overflow: ellipsis;
+-+  white-space: nowrap;
+-+}
+-+
+-+.log-entry.error .log-entry-action {
+-+  color: var(--text);
+-+}
+-+
+-+.log-entry.halted .log-entry-action {
+-+  color: var(--text-2);
+-+}
+-+
+- .footer {
+-   padding: 8px 14px;
+-   display: flex;
+-diff --git a/popup.html b/popup.html
+-index a2064c0..dd76490 100644
+---- a/popup.html
+-+++ b/popup.html
+-@@ -1,5 +1,5 @@
+- <!DOCTYPE html>
+--<html lang="en">
+-+<html lang="en" data-theme="dark">
+- <head>
+-   <meta charset="UTF-8" />
+-   <meta name="viewport" content="width=300, initial-scale=1.0" />
+-@@ -8,23 +8,39 @@
+-   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+-   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+-   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0&display=swap" rel="stylesheet" />
+--  <link rel="stylesheet" href="popup.css">
+--
+-+  <link rel="stylesheet" href="popup.css" />
+- </head>
+- <body>
+- 
+--<div class="header">
+--  <h1>SRM Auto Login</h1>
+--  <span id="accountsStatus" class="accounts-status" style="display:none;"></span>
+--</div>
+-+  <div class="header">
+-+    <h1>SRM Auto Login</h1>
+-+    <div class="header-right">
+-+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle theme" title="Switch theme">
+-+        <span class="material-symbols-rounded" id="themeIcon" aria-hidden="true">light_mode</span>
+-+      </button>
+-+      <span id="versionDisplay" class="version-display"></span>
+-+      <span id="accountsStatus" class="accounts-status" style="display:none;"></span>
+-+    </div>
+-+  </div>
+-+
+-+  <div id="updateBanner" class="update-banner" style="display:none;"></div>
+- 
+-   <form id="loginForm" autocomplete="off" novalidate>
+- 
+-     <div class="field">
+-       <label for="srmIdInput">SRM ID</label>
+-       <div class="srm-id-wrap">
+--        <input type="text" id="srmIdInput" placeholder="ab1234" inputmode="latin"
+--          autocomplete="username" spellcheck="false" maxlength="6" pattern="[A-Za-z]{2}[0-9]{4}" required />
+-+        <input
+-+          type="text"
+-+          id="srmIdInput"
+-+          placeholder="ab1234"
+-+          inputmode="latin"
+-+          autocomplete="username"
+-+          spellcheck="false"
+-+          maxlength="6"
+-+          pattern="[A-Za-z]{2}[0-9]{4}"
+-+          required
+-+        />
+-         <span class="srm-domain">@srmist.edu.in</span>
+-       </div>
+-     </div>
+-@@ -32,8 +48,12 @@
+-     <div class="field">
+-       <label for="pwInput">Password</label>
+-       <div class="input-wrap">
+--        <input type="password" id="pwInput" class="has-toggle"
+--          autocomplete="new-password" />
+-+        <input
+-+          type="password"
+-+          id="pwInput"
+-+          class="has-toggle"
+-+          autocomplete="new-password"
+-+        />
+-         <button class="toggle-pw" id="togglePw" type="button" aria-label="Show password">
+-           <span class="material-symbols-rounded" aria-hidden="true">visibility</span>
+-         </button>
+-@@ -41,8 +61,8 @@
+-     </div>
+- 
+-     <div class="btn-row">
+--      <button class="primary" id="saveBtn" type="submit">Save Account</button>
+--      <button class="secondary" id="clearBtn" type="button">Clear All</button>
+-+      <button class="primary" id="saveBtn" type="submit">Save account</button>
+-+      <button class="secondary" id="clearBtn" type="button">Clear all</button>
+-     </div>
+- 
+-     <div class="status" id="statusMsg" role="status" aria-live="polite"></div>
+-@@ -55,6 +75,17 @@
+- 
+-   <div class="divider"></div>
+- 
+-+  <div class="log-section" id="logSection" style="display:none;">
+-+    <button class="log-toggle" id="logToggle" type="button">
+-+      <span class="material-symbols-rounded" aria-hidden="true">history</span>
+-+      <span id="logToggleLabel">Activity log</span>
+-+      <span class="material-symbols-rounded log-chevron" id="logChevron" aria-hidden="true">expand_more</span>
+-+    </button>
+-+    <div class="log-body" id="logBody" style="display:none;"></div>
+-+  </div>
+-+
+-+  <div class="divider"></div>
+-+
+-   <div class="footer">
+-     <div class="footer-icon">
+-       <span class="material-symbols-rounded" aria-hidden="true" style="font-size:10px; line-height:1; display:block; color:#747474;">lock</span>
+-@@ -62,6 +93,7 @@
+-     <p>All data is stored locally</p>
+-   </div>
+- 
+-+  <script src="shared/storage.js"></script>
+-   <script src="popup.js"></script>
+- </body>
+--</html>
+-+</html>
+-\ No newline at end of file
+-diff --git a/popup.js b/popup.js
+-index 0e99a29..9ec5bba 100644
+---- a/popup.js
+-+++ b/popup.js
+-@@ -1,6 +1,6 @@
+- (function () {
+-   const SRM_DOMAIN = "@srmist.edu.in";
+--  const browserApi = globalThis.browser || globalThis.chrome;
+-+
+-   const srmIdInput = document.getElementById("srmIdInput");
+-   const pwInput = document.getElementById("pwInput");
+-   const togglePw = document.getElementById("togglePw");
+-@@ -10,6 +10,33 @@
+-   const accountsStatus = document.getElementById("accountsStatus");
+-   const accountList = document.getElementById("accountList");
+-   const statusMsg = document.getElementById("statusMsg");
+-+  const themeToggle = document.getElementById("themeToggle");
+-+  const themeIcon = document.getElementById("themeIcon");
+-+  const htmlEl = document.documentElement;
+-+
+-+  const savedTheme = localStorage.getItem("srm_theme") || "dark";
+-+  htmlEl.setAttribute("data-theme", savedTheme);
+-+  themeIcon.textContent = savedTheme === "dark" ? "light_mode" : "dark_mode";
+-+
+-+  if (typeof browserApi !== "undefined" && browserApi.storage) {
+-+    browserApi.storage.local.set({ srm_theme: savedTheme });
+-+  }
+-+
+-+  themeToggle.addEventListener("click", () => {
+-+    const currentTheme = htmlEl.getAttribute("data-theme");
+-+    const newTheme = currentTheme === "dark" ? "light" : "dark";
+-+
+-+    htmlEl.setAttribute("data-theme", newTheme);
+-+    themeIcon.textContent = newTheme === "dark" ? "light_mode" : "dark_mode";
+-+
+-+    localStorage.setItem("srm_theme", newTheme);
+-+
+-+    if (typeof browserApi !== "undefined" && browserApi.storage) {
+-+      browserApi.storage.local.set({ srm_theme: newTheme });
+-+    }
+-+  });
+-+
+-+  if (!browserApi || !srmIdInput || !pwInput || !loginForm) return;
+- 
+-   function makeIconSpan(iconName) {
+-     const span = document.createElement("span");
+-@@ -19,38 +46,6 @@
+-     return span;
+-   }
+- 
+--  if (!browserApi || !srmIdInput || !pwInput || !loginForm) return;
+--
+--  let accounts = [];
+--  let editingAccountId = "";
+--
+--  const storage = {
+--    get(keys) {
+--      if (globalThis.browser && browserApi === globalThis.browser) {
+--        return browserApi.storage.local.get(keys);
+--      }
+--      return new Promise((resolve) =>
+--        browserApi.storage.local.get(keys, resolve),
+--      );
+--    },
+--    set(values) {
+--      if (globalThis.browser && browserApi === globalThis.browser) {
+--        return browserApi.storage.local.set(values);
+--      }
+--      return new Promise((resolve) =>
+--        browserApi.storage.local.set(values, resolve),
+--      );
+--    },
+--    remove(keys) {
+--      if (globalThis.browser && browserApi === globalThis.browser) {
+--        return browserApi.storage.local.remove(keys);
+--      }
+--      return new Promise((resolve) =>
+--        browserApi.storage.local.remove(keys, resolve),
+--      );
+--    },
+--  };
+--
+-   function normalizeSrmId(value) {
+-     return String(value || "")
+-       .trim()
+-@@ -66,34 +61,62 @@
+-     return `${normalizeSrmId(value)}${SRM_DOMAIN}`;
+-   }
+- 
+--  function createAccount(email, password, existing) {
+-+  function createAccount(email, encodedPassword, existing) {
+-     const now = new Date().toISOString();
+-     return {
+-       id: existing
+-         ? existing.id
+-         : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+-       email,
+--      password,
+-+      password: encodedPassword,
+-       enabled: existing ? existing.enabled !== false : true,
+-       createdAt: existing ? existing.createdAt : now,
+-       updatedAt: now,
+-     };
+-   }
+- 
+-+  function relativeTime(iso) {
+-+    if (!iso) return "";
+-+    const diff = Date.now() - new Date(iso).getTime();
+-+    const mins = Math.floor(diff / 60000);
+-+    if (mins < 1) return "just now";
+-+    if (mins < 60) return `${mins}m ago`;
+-+    const hrs = Math.floor(mins / 60);
+-+    if (hrs < 24) return `${hrs}h ago`;
+-+    return `${Math.floor(hrs / 24)}d ago`;
+-+  }
+-+
+-+  let accounts = [];
+-+  let editingAccountId = "";
+-+
+-+  async function persistAccounts() {
+-+    await browserApi.storage.local.set({ srm_accounts: accounts });
+-+    await browserApi.storage.local.remove("srm_active_account_id");
+-+  }
+-+
+-   async function loadAccounts() {
+--    const data = await storage.get([
+-+    const data = await browserApi.storage.local.get([
+-       "srm_accounts",
+-       "srm_active_account_id",
+-       "srm_email",
+-       "srm_password",
+-     ]);
+-+
+-     accounts = Array.isArray(data.srm_accounts)
+-       ? data.srm_accounts.map(normalizeAccount).filter(Boolean)
+-       : [];
+- 
+-     if (!accounts.length && data.srm_email && data.srm_password) {
+--      accounts = [createAccount(data.srm_email, data.srm_password)];
+--      await storage.remove([
+-+      const migrated = normalizeAccount({
+-+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+-+        email: data.srm_email,
+-+        password: data.srm_password,
+-+        enabled: true,
+-+        createdAt: new Date().toISOString(),
+-+        updatedAt: new Date().toISOString(),
+-+      });
+-+      if (migrated) accounts = [migrated];
+-+      await browserApi.storage.local.remove([
+-         "srm_email",
+-         "srm_password",
+-         "srm_active_account_id",
+-@@ -101,27 +124,15 @@
+-     }
+- 
+-     await persistAccounts();
+-+
+-     srmIdInput.value = "";
+-     pwInput.value = "";
+-     renderAccounts();
+--  }
+--
+--  function normalizeAccount(account) {
+--    if (!account || !account.email || !account.password) return null;
+--    return {
+--      ...account,
+--      email: account.email.trim().toLowerCase(),
+--      enabled: account.enabled !== false,
+--    };
+--  }
+--
+--  async function persistAccounts() {
+--    await storage.set({ srm_accounts: accounts });
+--    await storage.remove("srm_active_account_id");
+-+    await renderLog();
+-   }
+- 
+-   function renderAccounts() {
+--    const enabledCount = accounts.filter((account) => account.enabled).length;
+-+    const enabledCount = accounts.filter((a) => a.enabled).length;
+-     const hasAccounts = accounts.length > 0;
+- 
+-     if (accountsStatus) {
+-@@ -137,10 +148,14 @@
+-       const row = document.createElement("div");
+-       row.className = `account-row ${account.enabled ? "enabled" : "disabled"}`;
+- 
+--      const email = document.createElement("span");
+--      email.className = "account-email";
+--      email.title = account.email;
+--      email.textContent = account.email;
+-+      const emailEl = document.createElement("span");
+-+      emailEl.className = "account-email";
+-+      emailEl.title = account.email;
+-+      emailEl.textContent = account.email;
+-+
+-+      const lastUsedEl = document.createElement("span");
+-+      lastUsedEl.className = "account-last-used";
+-+      lastUsedEl.textContent = relativeTime(account.lastUsed);
+- 
+-       const toggleBtn = document.createElement("button");
+-       toggleBtn.className = "account-action account-toggle";
+-@@ -169,6 +184,8 @@
+-         editingAccountId = account.id;
+-         srmIdInput.value = normalizeSrmId(account.email);
+-         pwInput.value = "";
+-+
+-+        pwInput.placeholder = "(unchanged \u2014 type to update)";
+-         pwInput.type = "password";
+-         togglePw.setAttribute("aria-label", "Show password");
+-         togglePw.replaceChildren(makeIconSpan("visibility"));
+-@@ -189,11 +206,92 @@
+-         renderAccounts();
+-       });
+- 
+--      row.append(email, toggleBtn, editBtn, deleteBtn);
+-+      row.append(emailEl, lastUsedEl, toggleBtn, editBtn, deleteBtn);
+-       accountList.append(row);
+-     });
+-   }
+- 
+-+  async function renderLog() {
+-+    const logSection = document.getElementById("logSection");
+-+    const logBody = document.getElementById("logBody");
+-+    if (!logSection || !logBody) return;
+-+
+-+    const data = await browserApi.storage.local.get("srm_login_log");
+-+    const log = Array.isArray(data.srm_login_log) ? data.srm_login_log : [];
+-+
+-+    if (!log.length) {
+-+      logSection.style.display = "none";
+-+      return;
+-+    }
+-+    logSection.style.display = "block";
+-+
+-+    logBody.textContent = "";
+-+    log.forEach((entry) => {
+-+      const row = document.createElement("div");
+-+      row.className = `log-entry ${entry.action}`;
+-+
+-+      const timeEl = document.createElement("span");
+-+      timeEl.className = "log-entry-time";
+-+      const d = new Date(entry.ts);
+-+      timeEl.textContent = `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+-+
+-+      const actionEl = document.createElement("span");
+-+      actionEl.className = "log-entry-action";
+-+      actionEl.textContent = entry.action.replace(/_/g, " ");
+-+
+-+      const emailEl = document.createElement("span");
+-+      emailEl.className = "log-entry-email";
+-+      emailEl.textContent = entry.email
+-+        ? entry.email.replace("@srmist.edu.in", "")
+-+        : "\u2014";
+-+
+-+      row.append(timeEl, actionEl, emailEl);
+-+      logBody.append(row);
+-+    });
+-+  }
+-+
+-+  const currentVersion = browserApi.runtime.getManifest().version;
+-+  const versionDisplay = document.getElementById("versionDisplay");
+-+  if (versionDisplay) versionDisplay.textContent = `v${currentVersion}`;
+-+
+-+  async function checkForUpdates() {
+-+    try {
+-+      const res = await fetch(
+-+        "https://api.github.com/repos/thenabbu/srm-auto-login/releases/latest",
+-+        { cache: "no-store" },
+-+      );
+-+      if (!res.ok) return;
+-+      const data = await res.json();
+-+      const latest = (data.tag_name || "").replace(/^v/i, "");
+-+      if (!latest || latest === currentVersion) return;
+-+
+-+      const banner = document.getElementById("updateBanner");
+-+      if (!banner) return;
+-+
+-+      const text = document.createTextNode(`v${latest} available \u2014 `);
+-+      const link = document.createElement("a");
+-+      link.href = data.html_url;
+-+      link.target = "_blank";
+-+      link.rel = "noopener noreferrer";
+-+      link.textContent = "download ZIP";
+-+      banner.append(text, link);
+-+      banner.style.display = "flex";
+-+    } catch (_) {}
+-+  }
+-+  checkForUpdates();
+-+
+-+  browserApi.runtime.onMessage.addListener(async (msg) => {
+-+    if (msg && msg.type === "srm_login_success") {
+-+      const target = accounts.find((a) => a.email === msg.email);
+-+      if (target) {
+-+        target.lastUsed = new Date().toISOString();
+-+        target.updatedAt = new Date().toISOString();
+-+        await persistAccounts();
+-+        renderAccounts();
+-+      }
+-+    }
+-+  });
+-+
+-   togglePw.addEventListener("click", () => {
+-     const showing = pwInput.type === "text";
+-     pwInput.type = showing ? "password" : "text";
+-@@ -214,30 +312,46 @@
+-     hideStatus();
+-   });
+- 
+-+  const logToggle = document.getElementById("logToggle");
+-+  if (logToggle) {
+-+    logToggle.addEventListener("click", () => {
+-+      const logBody = document.getElementById("logBody");
+-+      const chevron = document.getElementById("logChevron");
+-+      if (!logBody) return;
+-+      const opening = logBody.style.display === "none";
+-+      logBody.style.display = opening ? "flex" : "none";
+-+      if (chevron) chevron.classList.toggle("open", opening);
+-+    });
+-+  }
+-+
+-   loginForm.addEventListener("submit", async (e) => {
+-     e.preventDefault();
+-+
+-     const srmId = normalizeSrmId(srmIdInput.value);
+--    const password = pwInput.value.trim();
+--    const editingAccount = accounts.find(
+--      (account) => account.id === editingAccountId,
+--    );
+-+    const typedPassword = pwInput.value.trim();
+-+    const editingAccount = accounts.find((a) => a.id === editingAccountId);
+- 
+-     if (!isValidSrmId(srmId)) {
+-       showError("Use the SRM ID format: ab1234.");
+-       return;
+-     }
+- 
+--    if (!password && !editingAccount) {
+-+    let encodedPassword;
+-+    if (typedPassword) {
+-+      encodedPassword = _encode(typedPassword);
+-+    } else if (editingAccount) {
+-+      encodedPassword = editingAccount.password;
+-+    } else {
+-       showError("Enter a password.");
+-       return;
+-     }
+- 
+-     const email = toEmail(srmId);
+-     const existing = accounts.find(
+--      (account) => account.email === email && account.id !== editingAccountId,
+-+      (a) => a.email === email && a.id !== editingAccountId,
+-     );
+-     const source = editingAccount || existing || null;
+--    const account = createAccount(email, password || source.password, source);
+-+    const account = createAccount(email, encodedPassword, source);
+- 
+-     accounts = accounts.filter(
+-       (saved) => saved.id !== editingAccountId && saved.email !== email,
+-@@ -253,20 +367,23 @@
+-   clearBtn.addEventListener("click", async () => {
+-     accounts = [];
+-     await persistAccounts();
+--    await storage.remove([
+-+    await browserApi.storage.local.remove([
+-       "srm_email",
+-       "srm_password",
+-       "srm_active_account_id",
+-+      "srm_login_log",
+-     ]);
+-     resetForm();
+-     hideStatus();
+-     renderAccounts();
+-+    await renderLog();
+-   });
+- 
+-   function resetForm() {
+-     editingAccountId = "";
+-     loginForm.reset();
+-     pwInput.type = "password";
+-+    pwInput.placeholder = "";
+-     togglePw.setAttribute("aria-label", "Show password");
+-     togglePw.replaceChildren(makeIconSpan("visibility"));
+-     if (saveBtn) saveBtn.textContent = "Save account";
 diff --git a/manifest.json b/manifest.json
-index f427b1d..3d482ad 100644
+index 3d482ad..48833c7 100644
 --- a/manifest.json
 +++ b/manifest.json
-@@ -1,9 +1,9 @@
+@@ -1,7 +1,7 @@
  {
    "manifest_version": 3,
    "name": "SRM Auto Login",
--  "version": "1.4.2",
-+  "version": "2.0.0",
+-  "version": "2.0.0",
++  "version": "2.0.1",
    "description": "Automatically logs into SRM Google account",
--  "permissions": ["storage", "activeTab"],
-+  "permissions": ["storage"],
+   "permissions": ["storage"],
    "host_permissions": ["https://accounts.google.com/*"],
-   "icons": {
-     "16": "icons/icon16.png",
-@@ -15,7 +15,7 @@
-   "content_scripts": [
-     {
-       "matches": ["https://accounts.google.com/*"],
--      "js": ["content.js"],
-+      "js": ["shared/storage.js", "content.js"],
-       "run_at": "document_idle"
-     }
-   ],
-@@ -38,4 +38,4 @@
-       }
-     }
-   }
--}
-+}
-\ No newline at end of file
 diff --git a/popup.css b/popup.css
-index 3f5853f..81a7d58 100644
+index 81a7d58..8168165 100644
 --- a/popup.css
 +++ b/popup.css
-@@ -21,6 +21,20 @@
-   --radius: 3px;
- }
- 
-+:root[data-theme="light"] {
-+  --bg: #f7f7f7;
-+  --surface: #ffffff;
-+  --surface-2: #f0f0f0;
-+  --border: #e2e2e2;
-+  --border-mid: #d0d0d0;
-+  --border-hover: #aaaaaa;
-+  --border-focus: #111111;
-+  --border-active: #888888;
-+  --text: #111111;
-+  --text-2: #555555;
-+  --text-3: #999999;
-+}
-+
- html,
- body {
-   width: 280px;
-@@ -31,6 +45,9 @@ body {
-   line-height: 1.5;
-   -webkit-font-smoothing: antialiased;
-   -moz-osx-font-smoothing: grayscale;
-+  transition:
-+    background 0.15s ease,
-+    color 0.15s ease;
- }
- 
- .header {
-@@ -48,15 +65,80 @@ body {
-   color: var(--text);
- }
- 
-+.header-right {
-+  display: flex;
-+  align-items: center;
-+  gap: 6px;
-+  flex-shrink: 0;
-+}
-+
-+.theme-toggle {
-+  background: none;
-+  border: none;
-+  cursor: pointer;
-+  color: var(--text-2);
-+  display: flex;
-+  align-items: center;
-+  padding: 0;
-+  margin-right: 4px;
-+  transition: color 0.15s ease;
-+  outline: none;
-+}
-+
-+.theme-toggle:hover,
-+.theme-toggle:focus-visible {
-+  color: var(--text);
-+}
-+
-+.theme-toggle .material-symbols-rounded {
-+  font-size: 15px;
-+}
-+
-+.version-display {
-+  font-family: "IBM Plex Mono", monospace;
-+  font-size: 9px;
-+  color: var(--text-3);
-+  letter-spacing: 0.02em;
-+}
-+
- .accounts-status {
--  font-family: 'IBM Plex Mono', monospace;
-+  font-family: "IBM Plex Mono", monospace;
-   font-size: 9px;
-   color: var(--text-2);
-   letter-spacing: 0.02em;
-   white-space: nowrap;
-+}
-+
-+.update-banner {
-+  padding: 6px 14px;
-+  border-bottom: 1px solid var(--border);
-+  background: var(--surface);
-+  font-family: "IBM Plex Mono", monospace;
-+  font-size: 9px;
-+  color: var(--text-2);
-+  letter-spacing: 0.02em;
-+  display: flex;
-+  align-items: center;
-+  gap: 4px;
-+}
-+
-+.update-banner::before {
-+  content: "\2191";
-+  color: var(--text);
-+  font-size: 10px;
-   flex-shrink: 0;
- }
- 
-+.update-banner a {
-+  color: var(--text);
-+  text-decoration: underline;
-+  text-underline-offset: 2px;
-+}
-+
-+.update-banner a:hover {
-+  opacity: 0.75;
-+}
-+
- form {
-   padding: 13px 14px 11px;
+@@ -522,6 +522,27 @@ button.secondary:active {
    display: flex;
-@@ -210,6 +292,20 @@ input:-webkit-autofill:focus {
-   white-space: nowrap;
- }
- 
-+.toggle-pw:hover {
-+  color: var(--text);
-+  border-color: var(--border-hover);
-+  background: rgba(255, 255, 255, 0.03);
-+}
-+
-+.toggle-pw:active {
-+  background: rgba(255, 255, 255, 0.06);
-+}
-+
-+input:focus ~ .toggle-pw {
-+  border-left-color: var(--border-focus);
-+}
-+
- .material-symbols-rounded {
-   font-family: "Material Symbols Rounded";
-   font-weight: normal;
-@@ -227,20 +323,6 @@ input:-webkit-autofill:focus {
-   font-variation-settings: "FILL" 0;
- }
- 
--.toggle-pw:hover {
--  color: var(--text);
--  border-color: var(--border-hover);
--  background: rgba(255, 255, 255, 0.03);
--}
--
--.toggle-pw:active {
--  background: rgba(255, 255, 255, 0.06);
--}
--
--input:focus ~ .toggle-pw {
--  border-left-color: var(--border-focus);
--}
--
- .account-list {
-   display: none;
    flex-direction: column;
-@@ -253,7 +335,7 @@ input:focus ~ .toggle-pw {
- 
- .account-row {
-   display: grid;
--  grid-template-columns: 1fr auto auto auto;
-+  grid-template-columns: 1fr auto auto auto auto;
-   gap: 5px;
-   align-items: center;
-   padding: 6px 6px 6px 8px;
-@@ -280,6 +362,14 @@ input:focus ~ .toggle-pw {
-   color: var(--text);
- }
- 
-+.account-last-used {
-+  font-family: "IBM Plex Mono", monospace;
-+  font-size: 9px;
-+  color: var(--text-3);
-+  letter-spacing: 0.02em;
-+  white-space: nowrap;
+   gap: 3px;
++  max-height: 98px;
++  overflow-y: auto;
++  scrollbar-width: thin;
++  scrollbar-color: var(--border-active) transparent;
 +}
 +
- .account-action {
-   width: 26px;
-   height: 24px;
-@@ -289,6 +379,7 @@ input:focus ~ .toggle-pw {
-   background: transparent;
-   border: 1px solid var(--border-mid);
-   color: var(--text-2);
-+  border-radius: var(--radius);
- }
- 
- .account-action:hover {
-@@ -347,6 +438,7 @@ button.primary {
- button.primary:hover {
-   opacity: 0.88;
- }
++.log-body::-webkit-scrollbar {
++  width: 4px;
++}
 +
- button.primary:active {
-   opacity: 0.72;
- }
-@@ -388,6 +480,86 @@ button.secondary:active {
-   background: var(--border);
- }
- 
-+.log-toggle {
-+  width: 100%;
-+  padding: 7px 14px;
++.log-body::-webkit-scrollbar-track {
 +  background: transparent;
-+  border: none;
-+  border-radius: 0;
-+  color: var(--text-3);
-+  font-family: "IBM Plex Mono", monospace;
-+  font-size: 9px;
-+  font-weight: 500;
-+  text-transform: uppercase;
-+  letter-spacing: 0.08em;
-+  display: flex;
-+  align-items: center;
-+  gap: 6px;
-+  cursor: pointer;
-+  text-align: left;
 +}
 +
-+.log-toggle:hover {
-+  color: var(--text-2);
-+  background: var(--surface);
++.log-body::-webkit-scrollbar-thumb {
++  background: var(--border-active);
++  border-radius: 4px;
 +}
 +
-+.log-toggle .material-symbols-rounded {
-+  font-size: 14px;
-+}
-+
-+.log-chevron {
-+  margin-left: auto;
-+  transition: transform 0.15s ease;
-+}
-+
-+.log-chevron.open {
-+  transform: rotate(180deg);
-+}
-+
-+.log-body {
-+  padding: 4px 14px 10px;
-+  display: flex;
-+  flex-direction: column;
-+  gap: 3px;
-+}
-+
-+.log-entry {
-+  display: grid;
-+  grid-template-columns: auto 1fr auto;
-+  gap: 6px;
-+  align-items: baseline;
-+  font-family: "IBM Plex Mono", monospace;
-+  font-size: 9px;
-+  color: var(--text-3);
-+  letter-spacing: 0.01em;
-+  line-height: 1.6;
-+}
-+
-+.log-entry-time {
-+  color: var(--text-3);
-+  white-space: nowrap;
-+}
-+
-+.log-entry-action {
-+  color: var(--text-2);
-+}
-+
-+.log-entry-email {
-+  color: var(--text-3);
-+  overflow: hidden;
-+  text-overflow: ellipsis;
-+  white-space: nowrap;
-+}
-+
-+.log-entry.error .log-entry-action {
-+  color: var(--text);
-+}
-+
-+.log-entry.halted .log-entry-action {
-+  color: var(--text-2);
-+}
-+
- .footer {
-   padding: 8px 14px;
-   display: flex;
-diff --git a/popup.html b/popup.html
-index a2064c0..dd76490 100644
---- a/popup.html
-+++ b/popup.html
-@@ -1,5 +1,5 @@
- <!DOCTYPE html>
--<html lang="en">
-+<html lang="en" data-theme="dark">
- <head>
-   <meta charset="UTF-8" />
-   <meta name="viewport" content="width=300, initial-scale=1.0" />
-@@ -8,23 +8,39 @@
-   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
-   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0&display=swap" rel="stylesheet" />
--  <link rel="stylesheet" href="popup.css">
--
-+  <link rel="stylesheet" href="popup.css" />
- </head>
- <body>
++.log-body::-webkit-scrollbar-thumb:hover {
++  background: var(--text-3);
+ }
  
--<div class="header">
--  <h1>SRM Auto Login</h1>
--  <span id="accountsStatus" class="accounts-status" style="display:none;"></span>
--</div>
-+  <div class="header">
-+    <h1>SRM Auto Login</h1>
-+    <div class="header-right">
-+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle theme" title="Switch theme">
-+        <span class="material-symbols-rounded" id="themeIcon" aria-hidden="true">light_mode</span>
-+      </button>
-+      <span id="versionDisplay" class="version-display"></span>
-+      <span id="accountsStatus" class="accounts-status" style="display:none;"></span>
-+    </div>
-+  </div>
-+
-+  <div id="updateBanner" class="update-banner" style="display:none;"></div>
- 
-   <form id="loginForm" autocomplete="off" novalidate>
- 
-     <div class="field">
-       <label for="srmIdInput">SRM ID</label>
-       <div class="srm-id-wrap">
--        <input type="text" id="srmIdInput" placeholder="ab1234" inputmode="latin"
--          autocomplete="username" spellcheck="false" maxlength="6" pattern="[A-Za-z]{2}[0-9]{4}" required />
-+        <input
-+          type="text"
-+          id="srmIdInput"
-+          placeholder="ab1234"
-+          inputmode="latin"
-+          autocomplete="username"
-+          spellcheck="false"
-+          maxlength="6"
-+          pattern="[A-Za-z]{2}[0-9]{4}"
-+          required
-+        />
-         <span class="srm-domain">@srmist.edu.in</span>
-       </div>
-     </div>
-@@ -32,8 +48,12 @@
-     <div class="field">
-       <label for="pwInput">Password</label>
-       <div class="input-wrap">
--        <input type="password" id="pwInput" class="has-toggle"
--          autocomplete="new-password" />
-+        <input
-+          type="password"
-+          id="pwInput"
-+          class="has-toggle"
-+          autocomplete="new-password"
-+        />
-         <button class="toggle-pw" id="togglePw" type="button" aria-label="Show password">
-           <span class="material-symbols-rounded" aria-hidden="true">visibility</span>
-         </button>
-@@ -41,8 +61,8 @@
-     </div>
- 
-     <div class="btn-row">
--      <button class="primary" id="saveBtn" type="submit">Save Account</button>
--      <button class="secondary" id="clearBtn" type="button">Clear All</button>
-+      <button class="primary" id="saveBtn" type="submit">Save account</button>
-+      <button class="secondary" id="clearBtn" type="button">Clear all</button>
-     </div>
- 
-     <div class="status" id="statusMsg" role="status" aria-live="polite"></div>
-@@ -55,6 +75,17 @@
- 
-   <div class="divider"></div>
- 
-+  <div class="log-section" id="logSection" style="display:none;">
-+    <button class="log-toggle" id="logToggle" type="button">
-+      <span class="material-symbols-rounded" aria-hidden="true">history</span>
-+      <span id="logToggleLabel">Activity log</span>
-+      <span class="material-symbols-rounded log-chevron" id="logChevron" aria-hidden="true">expand_more</span>
-+    </button>
-+    <div class="log-body" id="logBody" style="display:none;"></div>
-+  </div>
-+
-+  <div class="divider"></div>
-+
-   <div class="footer">
-     <div class="footer-icon">
-       <span class="material-symbols-rounded" aria-hidden="true" style="font-size:10px; line-height:1; display:block; color:#747474;">lock</span>
-@@ -62,6 +93,7 @@
-     <p>All data is stored locally</p>
-   </div>
- 
-+  <script src="shared/storage.js"></script>
-   <script src="popup.js"></script>
- </body>
--</html>
-+</html>
-\ No newline at end of file
+ .log-entry {
 diff --git a/popup.js b/popup.js
-index 0e99a29..9ec5bba 100644
+index 9ec5bba..418bec2 100644
 --- a/popup.js
 +++ b/popup.js
-@@ -1,6 +1,6 @@
- (function () {
-   const SRM_DOMAIN = "@srmist.edu.in";
--  const browserApi = globalThis.browser || globalThis.chrome;
-+
-   const srmIdInput = document.getElementById("srmIdInput");
-   const pwInput = document.getElementById("pwInput");
-   const togglePw = document.getElementById("togglePw");
-@@ -10,6 +10,33 @@
-   const accountsStatus = document.getElementById("accountsStatus");
-   const accountList = document.getElementById("accountList");
-   const statusMsg = document.getElementById("statusMsg");
-+  const themeToggle = document.getElementById("themeToggle");
-+  const themeIcon = document.getElementById("themeIcon");
-+  const htmlEl = document.documentElement;
-+
-+  const savedTheme = localStorage.getItem("srm_theme") || "dark";
-+  htmlEl.setAttribute("data-theme", savedTheme);
-+  themeIcon.textContent = savedTheme === "dark" ? "light_mode" : "dark_mode";
-+
-+  if (typeof browserApi !== "undefined" && browserApi.storage) {
-+    browserApi.storage.local.set({ srm_theme: savedTheme });
-+  }
-+
-+  themeToggle.addEventListener("click", () => {
-+    const currentTheme = htmlEl.getAttribute("data-theme");
-+    const newTheme = currentTheme === "dark" ? "light" : "dark";
-+
-+    htmlEl.setAttribute("data-theme", newTheme);
-+    themeIcon.textContent = newTheme === "dark" ? "light_mode" : "dark_mode";
-+
-+    localStorage.setItem("srm_theme", newTheme);
-+
-+    if (typeof browserApi !== "undefined" && browserApi.storage) {
-+      browserApi.storage.local.set({ srm_theme: newTheme });
-+    }
-+  });
-+
-+  if (!browserApi || !srmIdInput || !pwInput || !loginForm) return;
+@@ -217,16 +217,19 @@
+     if (!logSection || !logBody) return;
  
-   function makeIconSpan(iconName) {
-     const span = document.createElement("span");
-@@ -19,38 +46,6 @@
-     return span;
-   }
+     const data = await browserApi.storage.local.get("srm_login_log");
+-    const log = Array.isArray(data.srm_login_log) ? data.srm_login_log : [];
++    let logs = Array.isArray(data.srm_login_log)
++      ? data.srm_login_log.slice()
++      : [];
++    logs.sort((a, b) => (b.ts || 0) - (a.ts || 0));
  
--  if (!browserApi || !srmIdInput || !pwInput || !loginForm) return;
--
--  let accounts = [];
--  let editingAccountId = "";
--
--  const storage = {
--    get(keys) {
--      if (globalThis.browser && browserApi === globalThis.browser) {
--        return browserApi.storage.local.get(keys);
--      }
--      return new Promise((resolve) =>
--        browserApi.storage.local.get(keys, resolve),
--      );
--    },
--    set(values) {
--      if (globalThis.browser && browserApi === globalThis.browser) {
--        return browserApi.storage.local.set(values);
--      }
--      return new Promise((resolve) =>
--        browserApi.storage.local.set(values, resolve),
--      );
--    },
--    remove(keys) {
--      if (globalThis.browser && browserApi === globalThis.browser) {
--        return browserApi.storage.local.remove(keys);
--      }
--      return new Promise((resolve) =>
--        browserApi.storage.local.remove(keys, resolve),
--      );
--    },
--  };
--
-   function normalizeSrmId(value) {
-     return String(value || "")
-       .trim()
-@@ -66,34 +61,62 @@
-     return `${normalizeSrmId(value)}${SRM_DOMAIN}`;
-   }
- 
--  function createAccount(email, password, existing) {
-+  function createAccount(email, encodedPassword, existing) {
-     const now = new Date().toISOString();
-     return {
-       id: existing
-         ? existing.id
-         : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-       email,
--      password,
-+      password: encodedPassword,
-       enabled: existing ? existing.enabled !== false : true,
-       createdAt: existing ? existing.createdAt : now,
-       updatedAt: now,
-     };
-   }
- 
-+  function relativeTime(iso) {
-+    if (!iso) return "";
-+    const diff = Date.now() - new Date(iso).getTime();
-+    const mins = Math.floor(diff / 60000);
-+    if (mins < 1) return "just now";
-+    if (mins < 60) return `${mins}m ago`;
-+    const hrs = Math.floor(mins / 60);
-+    if (hrs < 24) return `${hrs}h ago`;
-+    return `${Math.floor(hrs / 24)}d ago`;
-+  }
-+
-+  let accounts = [];
-+  let editingAccountId = "";
-+
-+  async function persistAccounts() {
-+    await browserApi.storage.local.set({ srm_accounts: accounts });
-+    await browserApi.storage.local.remove("srm_active_account_id");
-+  }
-+
-   async function loadAccounts() {
--    const data = await storage.get([
-+    const data = await browserApi.storage.local.get([
-       "srm_accounts",
-       "srm_active_account_id",
-       "srm_email",
-       "srm_password",
-     ]);
-+
-     accounts = Array.isArray(data.srm_accounts)
-       ? data.srm_accounts.map(normalizeAccount).filter(Boolean)
-       : [];
- 
-     if (!accounts.length && data.srm_email && data.srm_password) {
--      accounts = [createAccount(data.srm_email, data.srm_password)];
--      await storage.remove([
-+      const migrated = normalizeAccount({
-+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-+        email: data.srm_email,
-+        password: data.srm_password,
-+        enabled: true,
-+        createdAt: new Date().toISOString(),
-+        updatedAt: new Date().toISOString(),
-+      });
-+      if (migrated) accounts = [migrated];
-+      await browserApi.storage.local.remove([
-         "srm_email",
-         "srm_password",
-         "srm_active_account_id",
-@@ -101,27 +124,15 @@
+-    if (!log.length) {
++    if (!logs.length) {
+       logSection.style.display = "none";
+       return;
      }
+     logSection.style.display = "block";
  
-     await persistAccounts();
-+
-     srmIdInput.value = "";
-     pwInput.value = "";
-     renderAccounts();
--  }
--
--  function normalizeAccount(account) {
--    if (!account || !account.email || !account.password) return null;
--    return {
--      ...account,
--      email: account.email.trim().toLowerCase(),
--      enabled: account.enabled !== false,
--    };
--  }
--
--  async function persistAccounts() {
--    await storage.set({ srm_accounts: accounts });
--    await storage.remove("srm_active_account_id");
-+    await renderLog();
-   }
- 
-   function renderAccounts() {
--    const enabledCount = accounts.filter((account) => account.enabled).length;
-+    const enabledCount = accounts.filter((a) => a.enabled).length;
-     const hasAccounts = accounts.length > 0;
- 
-     if (accountsStatus) {
-@@ -137,10 +148,14 @@
+     logBody.textContent = "";
+-    log.forEach((entry) => {
++    logs.forEach((entry) => {
        const row = document.createElement("div");
-       row.className = `account-row ${account.enabled ? "enabled" : "disabled"}`;
+       row.className = `log-entry ${entry.action}`;
  
--      const email = document.createElement("span");
--      email.className = "account-email";
--      email.title = account.email;
--      email.textContent = account.email;
-+      const emailEl = document.createElement("span");
-+      emailEl.className = "account-email";
-+      emailEl.title = account.email;
-+      emailEl.textContent = account.email;
-+
-+      const lastUsedEl = document.createElement("span");
-+      lastUsedEl.className = "account-last-used";
-+      lastUsedEl.textContent = relativeTime(account.lastUsed);
- 
-       const toggleBtn = document.createElement("button");
-       toggleBtn.className = "account-action account-toggle";
-@@ -169,6 +184,8 @@
-         editingAccountId = account.id;
-         srmIdInput.value = normalizeSrmId(account.email);
-         pwInput.value = "";
-+
-+        pwInput.placeholder = "(unchanged \u2014 type to update)";
-         pwInput.type = "password";
-         togglePw.setAttribute("aria-label", "Show password");
-         togglePw.replaceChildren(makeIconSpan("visibility"));
-@@ -189,11 +206,92 @@
-         renderAccounts();
-       });
- 
--      row.append(email, toggleBtn, editBtn, deleteBtn);
-+      row.append(emailEl, lastUsedEl, toggleBtn, editBtn, deleteBtn);
-       accountList.append(row);
-     });
-   }
- 
-+  async function renderLog() {
-+    const logSection = document.getElementById("logSection");
-+    const logBody = document.getElementById("logBody");
-+    if (!logSection || !logBody) return;
-+
-+    const data = await browserApi.storage.local.get("srm_login_log");
-+    const log = Array.isArray(data.srm_login_log) ? data.srm_login_log : [];
-+
-+    if (!log.length) {
-+      logSection.style.display = "none";
-+      return;
-+    }
-+    logSection.style.display = "block";
-+
-+    logBody.textContent = "";
-+    log.forEach((entry) => {
-+      const row = document.createElement("div");
-+      row.className = `log-entry ${entry.action}`;
-+
-+      const timeEl = document.createElement("span");
-+      timeEl.className = "log-entry-time";
-+      const d = new Date(entry.ts);
-+      timeEl.textContent = `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
-+
-+      const actionEl = document.createElement("span");
-+      actionEl.className = "log-entry-action";
-+      actionEl.textContent = entry.action.replace(/_/g, " ");
-+
-+      const emailEl = document.createElement("span");
-+      emailEl.className = "log-entry-email";
-+      emailEl.textContent = entry.email
-+        ? entry.email.replace("@srmist.edu.in", "")
-+        : "\u2014";
-+
-+      row.append(timeEl, actionEl, emailEl);
-+      logBody.append(row);
-+    });
-+  }
-+
-+  const currentVersion = browserApi.runtime.getManifest().version;
-+  const versionDisplay = document.getElementById("versionDisplay");
-+  if (versionDisplay) versionDisplay.textContent = `v${currentVersion}`;
-+
-+  async function checkForUpdates() {
-+    try {
-+      const res = await fetch(
-+        "https://api.github.com/repos/thenabbu/srm-auto-login/releases/latest",
-+        { cache: "no-store" },
-+      );
-+      if (!res.ok) return;
-+      const data = await res.json();
-+      const latest = (data.tag_name || "").replace(/^v/i, "");
-+      if (!latest || latest === currentVersion) return;
-+
-+      const banner = document.getElementById("updateBanner");
-+      if (!banner) return;
-+
-+      const text = document.createTextNode(`v${latest} available \u2014 `);
-+      const link = document.createElement("a");
-+      link.href = data.html_url;
-+      link.target = "_blank";
-+      link.rel = "noopener noreferrer";
-+      link.textContent = "download ZIP";
-+      banner.append(text, link);
-+      banner.style.display = "flex";
-+    } catch (_) {}
-+  }
-+  checkForUpdates();
-+
-+  browserApi.runtime.onMessage.addListener(async (msg) => {
-+    if (msg && msg.type === "srm_login_success") {
-+      const target = accounts.find((a) => a.email === msg.email);
-+      if (target) {
-+        target.lastUsed = new Date().toISOString();
-+        target.updatedAt = new Date().toISOString();
-+        await persistAccounts();
-+        renderAccounts();
-+      }
-+    }
-+  });
-+
-   togglePw.addEventListener("click", () => {
-     const showing = pwInput.type === "text";
-     pwInput.type = showing ? "password" : "text";
-@@ -214,30 +312,46 @@
-     hideStatus();
-   });
- 
-+  const logToggle = document.getElementById("logToggle");
-+  if (logToggle) {
-+    logToggle.addEventListener("click", () => {
-+      const logBody = document.getElementById("logBody");
-+      const chevron = document.getElementById("logChevron");
-+      if (!logBody) return;
-+      const opening = logBody.style.display === "none";
-+      logBody.style.display = opening ? "flex" : "none";
-+      if (chevron) chevron.classList.toggle("open", opening);
-+    });
-+  }
-+
-   loginForm.addEventListener("submit", async (e) => {
-     e.preventDefault();
-+
-     const srmId = normalizeSrmId(srmIdInput.value);
--    const password = pwInput.value.trim();
--    const editingAccount = accounts.find(
--      (account) => account.id === editingAccountId,
--    );
-+    const typedPassword = pwInput.value.trim();
-+    const editingAccount = accounts.find((a) => a.id === editingAccountId);
- 
-     if (!isValidSrmId(srmId)) {
-       showError("Use the SRM ID format: ab1234.");
-       return;
-     }
- 
--    if (!password && !editingAccount) {
-+    let encodedPassword;
-+    if (typedPassword) {
-+      encodedPassword = _encode(typedPassword);
-+    } else if (editingAccount) {
-+      encodedPassword = editingAccount.password;
-+    } else {
-       showError("Enter a password.");
-       return;
-     }
- 
-     const email = toEmail(srmId);
-     const existing = accounts.find(
--      (account) => account.email === email && account.id !== editingAccountId,
-+      (a) => a.email === email && a.id !== editingAccountId,
-     );
-     const source = editingAccount || existing || null;
--    const account = createAccount(email, password || source.password, source);
-+    const account = createAccount(email, encodedPassword, source);
- 
-     accounts = accounts.filter(
-       (saved) => saved.id !== editingAccountId && saved.email !== email,
-@@ -253,20 +367,23 @@
-   clearBtn.addEventListener("click", async () => {
-     accounts = [];
-     await persistAccounts();
--    await storage.remove([
-+    await browserApi.storage.local.remove([
-       "srm_email",
-       "srm_password",
-       "srm_active_account_id",
-+      "srm_login_log",
-     ]);
-     resetForm();
-     hideStatus();
-     renderAccounts();
-+    await renderLog();
-   });
- 
-   function resetForm() {
-     editingAccountId = "";
-     loginForm.reset();
-     pwInput.type = "password";
-+    pwInput.placeholder = "";
-     togglePw.setAttribute("aria-label", "Show password");
-     togglePw.replaceChildren(makeIconSpan("visibility"));
-     if (saveBtn) saveBtn.textContent = "Save account";

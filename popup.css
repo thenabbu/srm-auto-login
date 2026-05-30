@@ -522,6 +522,27 @@ button.secondary:active {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  max-height: 98px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-active) transparent;
+}
+
+.log-body::-webkit-scrollbar {
+  width: 4px;
+}
+
+.log-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.log-body::-webkit-scrollbar-thumb {
+  background: var(--border-active);
+  border-radius: 4px;
+}
+
+.log-body::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
 }
 
 .log-entry {

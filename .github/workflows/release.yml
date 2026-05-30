@@ -28,7 +28,7 @@ jobs:
           fi
 
       - name: Package extension
-        run: zip -r "srm-auto-login-${GITHUB_REF_NAME}.zip" manifest.json popup.html popup.css popup.js content.js icons/
+        run: zip -r "srm-auto-login-${GITHUB_REF_NAME}.zip" manifest.json popup.html popup.css popup.js content.js shared/ icons/
 
       - name: Create release
         uses: softprops/action-gh-release@v2

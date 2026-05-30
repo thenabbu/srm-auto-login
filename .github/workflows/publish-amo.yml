@@ -1,0 +1,32 @@
+name: Publish to Mozilla AMO
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish-amo:
+    name: Sign & Publish to AMO
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build extension
+        id: web-ext-build
+        uses: kewisch/action-web-ext@v1
+        with:
+          cmd: build
+          source: .
+          ignoreFiles: '["*.git*", "*.github*", ".gitignore", "README.md"]'
+
+      - name: Sign and submit to AMO
+        uses: kewisch/action-web-ext@v2
+        with:
+          cmd: sign
+          source: ${{ steps.web-ext-build.outputs.target }}
+          channel: listed
+          apiKey: ${{ secrets.AMO_JWT_ISSUER }}
+          apiSecret: ${{ secrets.AMO_JWT_SECRET }}

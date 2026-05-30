@@ -1,6 +1,6 @@
 (function () {
   const SRM_DOMAIN = "@srmist.edu.in";
-  const browserApi = globalThis.browser || globalThis.chrome;
+
   const srmIdInput = document.getElementById("srmIdInput");
   const pwInput = document.getElementById("pwInput");
   const togglePw = document.getElementById("togglePw");
@@ -10,6 +10,33 @@
   const accountsStatus = document.getElementById("accountsStatus");
   const accountList = document.getElementById("accountList");
   const statusMsg = document.getElementById("statusMsg");
+  const themeToggle = document.getElementById("themeToggle");
+  const themeIcon = document.getElementById("themeIcon");
+  const htmlEl = document.documentElement;
+
+  const savedTheme = localStorage.getItem("srm_theme") || "dark";
+  htmlEl.setAttribute("data-theme", savedTheme);
+  themeIcon.textContent = savedTheme === "dark" ? "light_mode" : "dark_mode";
+
+  if (typeof browserApi !== "undefined" && browserApi.storage) {
+    browserApi.storage.local.set({ srm_theme: savedTheme });
+  }
+
+  themeToggle.addEventListener("click", () => {
+    const currentTheme = htmlEl.getAttribute("data-theme");
+    const newTheme = currentTheme === "dark" ? "light" : "dark";
+
+    htmlEl.setAttribute("data-theme", newTheme);
+    themeIcon.textContent = newTheme === "dark" ? "light_mode" : "dark_mode";
+
+    localStorage.setItem("srm_theme", newTheme);
+
+    if (typeof browserApi !== "undefined" && browserApi.storage) {
+      browserApi.storage.local.set({ srm_theme: newTheme });
+    }
+  });
+
+  if (!browserApi || !srmIdInput || !pwInput || !loginForm) return;
 
   function makeIconSpan(iconName) {
     const span = document.createElement("span");
@@ -18,38 +45,6 @@
     span.textContent = iconName;
     return span;
   }
-
-  if (!browserApi || !srmIdInput || !pwInput || !loginForm) return;
-
-  let accounts = [];
-  let editingAccountId = "";
-
-  const storage = {
-    get(keys) {
-      if (globalThis.browser && browserApi === globalThis.browser) {
-        return browserApi.storage.local.get(keys);
-      }
-      return new Promise((resolve) =>
-        browserApi.storage.local.get(keys, resolve),
-      );
-    },
-    set(values) {
-      if (globalThis.browser && browserApi === globalThis.browser) {
-        return browserApi.storage.local.set(values);
-      }
-      return new Promise((resolve) =>
-        browserApi.storage.local.set(values, resolve),
-      );
-    },
-    remove(keys) {
-      if (globalThis.browser && browserApi === globalThis.browser) {
-        return browserApi.storage.local.remove(keys);
-      }
-      return new Promise((resolve) =>
-        browserApi.storage.local.remove(keys, resolve),
-      );
-    },
-  };
 
   function normalizeSrmId(value) {
     return String(value || "")
@@ -66,34 +61,62 @@
     return `${normalizeSrmId(value)}${SRM_DOMAIN}`;
   }
 
-  function createAccount(email, password, existing) {
+  function createAccount(email, encodedPassword, existing) {
     const now = new Date().toISOString();
     return {
       id: existing
         ? existing.id
         : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
       email,
-      password,
+      password: encodedPassword,
       enabled: existing ? existing.enabled !== false : true,
       createdAt: existing ? existing.createdAt : now,
       updatedAt: now,
     };
   }
 
+  function relativeTime(iso) {
+    if (!iso) return "";
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  }
+
+  let accounts = [];
+  let editingAccountId = "";
+
+  async function persistAccounts() {
+    await browserApi.storage.local.set({ srm_accounts: accounts });
+    await browserApi.storage.local.remove("srm_active_account_id");
+  }
+
   async function loadAccounts() {
-    const data = await storage.get([
+    const data = await browserApi.storage.local.get([
       "srm_accounts",
       "srm_active_account_id",
       "srm_email",
       "srm_password",
     ]);
+
     accounts = Array.isArray(data.srm_accounts)
       ? data.srm_accounts.map(normalizeAccount).filter(Boolean)
       : [];
 
     if (!accounts.length && data.srm_email && data.srm_password) {
-      accounts = [createAccount(data.srm_email, data.srm_password)];
-      await storage.remove([
+      const migrated = normalizeAccount({
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        email: data.srm_email,
+        password: data.srm_password,
+        enabled: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      if (migrated) accounts = [migrated];
+      await browserApi.storage.local.remove([
         "srm_email",
         "srm_password",
         "srm_active_account_id",
@@ -101,27 +124,15 @@
     }
 
     await persistAccounts();
+
     srmIdInput.value = "";
     pwInput.value = "";
     renderAccounts();
-  }
-
-  function normalizeAccount(account) {
-    if (!account || !account.email || !account.password) return null;
-    return {
-      ...account,
-      email: account.email.trim().toLowerCase(),
-      enabled: account.enabled !== false,
-    };
-  }
-
-  async function persistAccounts() {
-    await storage.set({ srm_accounts: accounts });
-    await storage.remove("srm_active_account_id");
+    await renderLog();
   }
 
   function renderAccounts() {
-    const enabledCount = accounts.filter((account) => account.enabled).length;
+    const enabledCount = accounts.filter((a) => a.enabled).length;
     const hasAccounts = accounts.length > 0;
 
     if (accountsStatus) {
@@ -137,10 +148,14 @@
       const row = document.createElement("div");
       row.className = `account-row ${account.enabled ? "enabled" : "disabled"}`;
 
-      const email = document.createElement("span");
-      email.className = "account-email";
-      email.title = account.email;
-      email.textContent = account.email;
+      const emailEl = document.createElement("span");
+      emailEl.className = "account-email";
+      emailEl.title = account.email;
+      emailEl.textContent = account.email;
+
+      const lastUsedEl = document.createElement("span");
+      lastUsedEl.className = "account-last-used";
+      lastUsedEl.textContent = relativeTime(account.lastUsed);
 
       const toggleBtn = document.createElement("button");
       toggleBtn.className = "account-action account-toggle";
@@ -169,6 +184,8 @@
         editingAccountId = account.id;
         srmIdInput.value = normalizeSrmId(account.email);
         pwInput.value = "";
+
+        pwInput.placeholder = "(unchanged \u2014 type to update)";
         pwInput.type = "password";
         togglePw.setAttribute("aria-label", "Show password");
         togglePw.replaceChildren(makeIconSpan("visibility"));
@@ -189,10 +206,91 @@
         renderAccounts();
       });
 
-      row.append(email, toggleBtn, editBtn, deleteBtn);
+      row.append(emailEl, lastUsedEl, toggleBtn, editBtn, deleteBtn);
       accountList.append(row);
     });
   }
+
+  async function renderLog() {
+    const logSection = document.getElementById("logSection");
+    const logBody = document.getElementById("logBody");
+    if (!logSection || !logBody) return;
+
+    const data = await browserApi.storage.local.get("srm_login_log");
+    const log = Array.isArray(data.srm_login_log) ? data.srm_login_log : [];
+
+    if (!log.length) {
+      logSection.style.display = "none";
+      return;
+    }
+    logSection.style.display = "block";
+
+    logBody.textContent = "";
+    log.forEach((entry) => {
+      const row = document.createElement("div");
+      row.className = `log-entry ${entry.action}`;
+
+      const timeEl = document.createElement("span");
+      timeEl.className = "log-entry-time";
+      const d = new Date(entry.ts);
+      timeEl.textContent = `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+
+      const actionEl = document.createElement("span");
+      actionEl.className = "log-entry-action";
+      actionEl.textContent = entry.action.replace(/_/g, " ");
+
+      const emailEl = document.createElement("span");
+      emailEl.className = "log-entry-email";
+      emailEl.textContent = entry.email
+        ? entry.email.replace("@srmist.edu.in", "")
+        : "\u2014";
+
+      row.append(timeEl, actionEl, emailEl);
+      logBody.append(row);
+    });
+  }
+
+  const currentVersion = browserApi.runtime.getManifest().version;
+  const versionDisplay = document.getElementById("versionDisplay");
+  if (versionDisplay) versionDisplay.textContent = `v${currentVersion}`;
+
+  async function checkForUpdates() {
+    try {
+      const res = await fetch(
+        "https://api.github.com/repos/thenabbu/srm-auto-login/releases/latest",
+        { cache: "no-store" },
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const latest = (data.tag_name || "").replace(/^v/i, "");
+      if (!latest || latest === currentVersion) return;
+
+      const banner = document.getElementById("updateBanner");
+      if (!banner) return;
+
+      const text = document.createTextNode(`v${latest} available \u2014 `);
+      const link = document.createElement("a");
+      link.href = data.html_url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "download ZIP";
+      banner.append(text, link);
+      banner.style.display = "flex";
+    } catch (_) {}
+  }
+  checkForUpdates();
+
+  browserApi.runtime.onMessage.addListener(async (msg) => {
+    if (msg && msg.type === "srm_login_success") {
+      const target = accounts.find((a) => a.email === msg.email);
+      if (target) {
+        target.lastUsed = new Date().toISOString();
+        target.updatedAt = new Date().toISOString();
+        await persistAccounts();
+        renderAccounts();
+      }
+    }
+  });
 
   togglePw.addEventListener("click", () => {
     const showing = pwInput.type === "text";
@@ -214,30 +312,46 @@
     hideStatus();
   });
 
+  const logToggle = document.getElementById("logToggle");
+  if (logToggle) {
+    logToggle.addEventListener("click", () => {
+      const logBody = document.getElementById("logBody");
+      const chevron = document.getElementById("logChevron");
+      if (!logBody) return;
+      const opening = logBody.style.display === "none";
+      logBody.style.display = opening ? "flex" : "none";
+      if (chevron) chevron.classList.toggle("open", opening);
+    });
+  }
+
   loginForm.addEventListener("submit", async (e) => {
     e.preventDefault();
+
     const srmId = normalizeSrmId(srmIdInput.value);
-    const password = pwInput.value.trim();
-    const editingAccount = accounts.find(
-      (account) => account.id === editingAccountId,
-    );
+    const typedPassword = pwInput.value.trim();
+    const editingAccount = accounts.find((a) => a.id === editingAccountId);
 
     if (!isValidSrmId(srmId)) {
       showError("Use the SRM ID format: ab1234.");
       return;
     }
 
-    if (!password && !editingAccount) {
+    let encodedPassword;
+    if (typedPassword) {
+      encodedPassword = _encode(typedPassword);
+    } else if (editingAccount) {
+      encodedPassword = editingAccount.password;
+    } else {
       showError("Enter a password.");
       return;
     }
 
     const email = toEmail(srmId);
     const existing = accounts.find(
-      (account) => account.email === email && account.id !== editingAccountId,
+      (a) => a.email === email && a.id !== editingAccountId,
     );
     const source = editingAccount || existing || null;
-    const account = createAccount(email, password || source.password, source);
+    const account = createAccount(email, encodedPassword, source);
 
     accounts = accounts.filter(
       (saved) => saved.id !== editingAccountId && saved.email !== email,
@@ -253,20 +367,23 @@
   clearBtn.addEventListener("click", async () => {
     accounts = [];
     await persistAccounts();
-    await storage.remove([
+    await browserApi.storage.local.remove([
       "srm_email",
       "srm_password",
       "srm_active_account_id",
+      "srm_login_log",
     ]);
     resetForm();
     hideStatus();
     renderAccounts();
+    await renderLog();
   });
 
   function resetForm() {
     editingAccountId = "";
     loginForm.reset();
     pwInput.type = "password";
+    pwInput.placeholder = "";
     togglePw.setAttribute("aria-label", "Show password");
     togglePw.replaceChildren(makeIconSpan("visibility"));
     if (saveBtn) saveBtn.textContent = "Save account";
